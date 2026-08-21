@@ -29,7 +29,16 @@ button { cursor:pointer; }
 .decode-card { margin-top:18px; padding:20px 22px; }
 .canvas-wrap { position:relative; min-height:clamp(240px,46vw,680px); display:grid; place-items:center; overflow:hidden; background:#080807; border:1px solid var(--ink); }
 .canvas-wrap::before { content:""; position:absolute; inset:0; background-image:linear-gradient(rgba(255,255,255,.035) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.035) 1px,transparent 1px); background-size:24px 24px; }
-.canvas-wrap canvas { position:relative; display:block; max-width:100%; max-height:clamp(240px,46vw,680px); width:auto; height:auto; object-fit:contain; }
+.frame-stage { position:relative; display:grid; place-items:stretch; max-width:100%; max-height:clamp(240px,46vw,680px); transition:transform 80ms ease-out; will-change:transform; }
+.frame-stage canvas { grid-area:1/1; display:block; max-width:100%; max-height:clamp(240px,46vw,680px); width:auto; height:auto; object-fit:contain; }
+.macroblock-overlay { position:relative; z-index:2; width:100%!important; height:100%!important; opacity:0; pointer-events:none; }
+.macroblock-overlay.visible { opacity:1; pointer-events:auto; cursor:crosshair; }
+.macroblock-overlay:focus-visible { outline:3px solid var(--acid); outline-offset:-3px; }
+.zoom-controls { position:absolute; z-index:4; right:12px; top:12px; display:flex; align-items:center; background:rgba(8,8,7,.86); border:1px solid rgba(255,255,255,.38); color:#fff; backdrop-filter:blur(7px); }
+.zoom-controls button { width:32px; height:30px; border:0; border-right:1px solid rgba(255,255,255,.24); background:transparent; color:inherit; font:bold 16px monospace; }
+.zoom-controls button:hover { background:var(--acid); color:var(--ink); }
+.zoom-controls b { min-width:52px; text-align:center; font:10px monospace; }
+.zoom-controls button.fit { width:auto; padding:0 10px; border-left:1px solid rgba(255,255,255,.24); border-right:0; font-size:10px; }
 .decode-status { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; gap:10px; color:#ddd8cc; background:rgba(8,8,7,.76); font:11px monospace; text-align:center; padding:28px; }
 .decode-status i { width:9px; height:9px; border-radius:50%; background:var(--acid); box-shadow:0 0 0 5px rgba(217,255,67,.14); animation:decode-pulse 1s ease-in-out infinite alternate; }
 .decode-status.error i,.decode-status.unsupported i { background:var(--orange); box-shadow:none; animation:none; }
@@ -39,6 +48,17 @@ button { cursor:pointer; }
 .frame-controls button:hover:not(:disabled) { background:var(--acid); }
 .frame-controls button:disabled { opacity:.35; cursor:not-allowed; }
 .frame-controls input { width:100%; accent-color:var(--orange); }
+.macroblock-toolbar { display:flex; align-items:center; justify-content:space-between; gap:16px; margin-top:13px; padding-top:13px; border-top:1px solid var(--line); }
+.macroblock-toolbar button { display:flex; align-items:center; gap:7px; min-height:32px; padding:0 11px; border:1px solid var(--ink); background:var(--paper); font:bold 10px monospace; white-space:nowrap; }
+.macroblock-toolbar button.active { background:var(--acid); }
+.macroblock-toolbar button i { width:7px; height:7px; border-radius:50%; background:var(--ink); }
+.macroblock-toolbar>span { font:10px monospace; opacity:.58; text-align:right; }
+.macroblock-info { display:grid; grid-template-columns:repeat(6,1fr); margin-top:12px; border:1px solid var(--ink); }
+.macroblock-info>div { min-height:86px; padding:12px; border-right:1px solid var(--ink); display:flex; flex-direction:column; }
+.macroblock-info>div:last-child { border-right:0; }
+.macroblock-info span { font:9px monospace; letter-spacing:.08em; opacity:.58; }
+.macroblock-info strong { margin:auto 0 5px; font-size:15px; letter-spacing:-.025em; }
+.macroblock-info small { font:9px/1.35 monospace; opacity:.55; }
 .timeline-card { margin-top:18px; padding:20px 22px; }
 .section-title { display:flex; justify-content:space-between; align-items:center; margin-bottom:18px; }
 .section-title>div { display:flex; align-items:center; gap:10px; }
@@ -78,5 +98,5 @@ pre { margin:0; padding:12px; background:var(--ink); color:var(--acid); white-sp
 .bar-row>div { height:9px; background:#e5e0d5; }
 .bar-row i { display:block; height:100%; border-right:1px solid var(--ink); }
 .bar-row b { text-align:right; }
-@media(max-width:900px){.stats-grid{grid-template-columns:1fr 1fr}.stat:nth-child(2){border-right:0}.stat:nth-child(-n+2){border-bottom:1px solid var(--ink)}.content-grid{grid-template-columns:1fr}.file-chip{margin-left:auto}.summary-head{padding-top:36px}}
-@media(max-width:560px){.feature-row{display:none}.summary-head{align-items:start}.summary-head .dropzone{min-width:48px;width:48px;padding:0}.summary-head .dropzone b{display:none}.stats-grid{grid-template-columns:1fr}.stat{border-right:0!important;border-bottom:1px solid var(--ink)}.stat:last-child{border-bottom:0}.decode-card{padding:15px 12px}.frame-controls{gap:7px}.frame-controls button{padding:0 7px}.nal-card{padding:15px 12px}.nal-row{grid-template-columns:42px minmax(150px,1fr) 45px}.nal-row span:nth-child(4),.nal-row span:nth-child(5){display:none}.file-chip{max-width:170px}.topbar{gap:8px}.brand-button>span:last-child{display:none}}
+@media(max-width:900px){.stats-grid{grid-template-columns:1fr 1fr}.stat:nth-child(2){border-right:0}.stat:nth-child(-n+2){border-bottom:1px solid var(--ink)}.macroblock-info{grid-template-columns:1fr 1fr}.macroblock-info>div{border-bottom:1px solid var(--ink)}.macroblock-info>div:nth-child(even){border-right:0}.macroblock-info>div:last-child{border-bottom:0}.content-grid{grid-template-columns:1fr}.file-chip{margin-left:auto}.summary-head{padding-top:36px}}
+@media(max-width:560px){.feature-row{display:none}.summary-head{align-items:start}.summary-head .dropzone{min-width:48px;width:48px;padding:0}.summary-head .dropzone b{display:none}.stats-grid{grid-template-columns:1fr}.stat{border-right:0!important;border-bottom:1px solid var(--ink)}.stat:last-child{border-bottom:0}.decode-card{padding:15px 12px}.frame-controls{gap:7px}.frame-controls button{padding:0 7px}.macroblock-toolbar{align-items:flex-start;flex-direction:column}.macroblock-toolbar>span{text-align:left}.macroblock-info{grid-template-columns:1fr}.macroblock-info>div{border-right:0}.nal-card{padding:15px 12px}.nal-row{grid-template-columns:42px minmax(150px,1fr) 45px}.nal-row span:nth-child(4),.nal-row span:nth-child(5){display:none}.file-chip{max-width:170px}.topbar{gap:8px}.brand-button>span:last-child{display:none}}

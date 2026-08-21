@@ -31,12 +31,76 @@ function NalBadge({ unit }: { unit: NalUnit }) { return <span className="nal-bad
 
 function DecodedPreview({ bytes, analysis, selected, onSelect }: { bytes: Uint8Array; analysis: Analysis; selected: NalUnit | null; onSelect: (unit: NalUnit) => void }) {
   const canvas = useRef<HTMLCanvasElement>(null);
+  const macroblockCanvas = useRef<HTMLCanvasElement>(null);
+  const canvasWrap = useRef<HTMLDivElement>(null);
   const [state, setState] = useState<"decoding" | "ready" | "unsupported" | "error">("decoding");
   const [message, setMessage] = useState("正在初始化解码器…");
+  const [showMacroblocks, setShowMacroblocks] = useState(true);
+  const [selectedMacroblock, setSelectedMacroblock] = useState(0);
+  const [zoom, setZoom] = useState(1);
+  const [zoomOrigin, setZoomOrigin] = useState({ x: 50, y: 50 });
   const frames = useMemo(() => analysis.units.filter(unit => unit.type >= 1 && unit.type <= 5 && unit.firstMb === 0), [analysis]);
   const framePosition = Math.max(0, frames.findLastIndex(frame => frame.index <= (selected?.index ?? 0)));
   const target = frames[framePosition];
+  const macroblockColumns = Math.ceil((analysis.sps?.width ?? 0) / 16);
+  const macroblockRows = Math.ceil((analysis.sps?.height ?? 0) / 16);
+  const macroblockCount = macroblockColumns * macroblockRows;
+  const macroblockAddress = Math.min(selectedMacroblock, Math.max(0, macroblockCount - 1));
+  const macroblockColumn = macroblockColumns ? macroblockAddress % macroblockColumns : 0;
+  const macroblockRow = macroblockColumns ? Math.floor(macroblockAddress / macroblockColumns) : 0;
+  const frameSlices = useMemo(() => {
+    if (!target) return [];
+    const nextFrameIndex = frames[framePosition + 1]?.index ?? analysis.units.length;
+    return analysis.units.filter(unit => unit.index >= target.index && unit.index < nextFrameIndex && unit.sliceType && unit.firstMb !== undefined).sort((a, b) => (a.firstMb ?? 0) - (b.firstMb ?? 0));
+  }, [analysis.units, framePosition, frames, target]);
+  const slicePosition = Math.max(0, frameSlices.findLastIndex(unit => (unit.firstMb ?? 0) <= macroblockAddress));
+  const macroblockSlice = frameSlices[slicePosition];
+  const sliceEnd = Math.min(macroblockCount - 1, (frameSlices[slicePosition + 1]?.firstMb ?? macroblockCount) - 1);
   const unavailableMessage = !analysis.sps ? "码流缺少可用的 SPS，无法配置解码器" : typeof VideoDecoder === "undefined" ? "当前浏览器不支持 WebCodecs VideoDecoder" : "";
+
+  useEffect(() => {
+    const element = canvasWrap.current;
+    if (!element) return;
+    const handleWheel = (event: WheelEvent) => {
+      event.preventDefault();
+      const bounds = element.getBoundingClientRect();
+      setZoomOrigin({ x: Math.min(100, Math.max(0, (event.clientX - bounds.left) / bounds.width * 100)), y: Math.min(100, Math.max(0, (event.clientY - bounds.top) / bounds.height * 100)) });
+      setZoom(current => Math.min(8, Math.max(.5, current * Math.exp(-event.deltaY * .002))));
+    };
+    element.addEventListener("wheel", handleWheel, { passive: false });
+    return () => element.removeEventListener("wheel", handleWheel);
+  }, []);
+
+  useEffect(() => {
+    const overlay = macroblockCanvas.current;
+    const sps = analysis.sps;
+    if (!overlay || !sps) return;
+    overlay.width = sps.width; overlay.height = sps.height;
+    const context = overlay.getContext("2d");
+    if (!context) return;
+    context.clearRect(0, 0, overlay.width, overlay.height);
+    if (!showMacroblocks) return;
+    context.beginPath();
+    for (let x = 16; x < sps.width; x += 16) { context.moveTo(x + .5, 0); context.lineTo(x + .5, sps.height); }
+    for (let y = 16; y < sps.height; y += 16) { context.moveTo(0, y + .5); context.lineTo(sps.width, y + .5); }
+    context.lineWidth = Math.max(1, sps.width / 1600);
+    context.strokeStyle = "rgba(217,255,67,.58)"; context.stroke();
+    context.fillStyle = "rgba(255,107,53,.34)";
+    context.fillRect(macroblockColumn * 16, macroblockRow * 16, Math.min(16, sps.width - macroblockColumn * 16), Math.min(16, sps.height - macroblockRow * 16));
+    context.strokeStyle = "#ff6b35"; context.lineWidth = Math.max(2, sps.width / 700);
+    context.strokeRect(macroblockColumn * 16 + 1, macroblockRow * 16 + 1, Math.min(14, sps.width - macroblockColumn * 16 - 2), Math.min(14, sps.height - macroblockRow * 16 - 2));
+  }, [analysis.sps, macroblockColumn, macroblockRow, showMacroblocks]);
+
+  const selectMacroblockAt = (clientX: number, clientY: number) => {
+    const overlay = macroblockCanvas.current;
+    if (!overlay || !showMacroblocks || !macroblockColumns || !macroblockRows) return;
+    const bounds = overlay.getBoundingClientRect();
+    const column = Math.min(macroblockColumns - 1, Math.max(0, Math.floor((clientX - bounds.left) / bounds.width * macroblockColumns)));
+    const row = Math.min(macroblockRows - 1, Math.max(0, Math.floor((clientY - bounds.top) / bounds.height * macroblockRows)));
+    setSelectedMacroblock(row * macroblockColumns + column);
+  };
+
+  const changeZoom = (value: number) => setZoom(Math.min(8, Math.max(.5, value)));
 
   useEffect(() => {
     let cancelled = false;
@@ -105,8 +169,21 @@ function DecodedPreview({ bytes, analysis, selected, onSelect }: { bytes: Uint8A
 
   return <section className="decode-card">
     <div className="section-title"><div><span>01</span><h3>解码画面</h3></div><small>{target ? `FRAME ${framePosition + 1} / ${frames.length} · NAL #${target.index}` : "NO FRAME"}</small></div>
-    <div className="canvas-wrap">
-      <canvas ref={canvas} aria-label="当前选择位置的解码画面" />
+    <div ref={canvasWrap} className="canvas-wrap" title="在画面上滚动鼠标以缩放">
+      <div className="frame-stage" style={{ transform: `scale(${zoom})`, transformOrigin: `${zoomOrigin.x}% ${zoomOrigin.y}%` }}>
+        <canvas ref={canvas} aria-label="当前选择位置的解码画面" />
+        <canvas ref={macroblockCanvas} className={`macroblock-overlay ${showMacroblocks ? "visible" : ""}`} role="button" tabIndex={showMacroblocks ? 0 : -1} aria-label={`宏块网格，当前选择宏块 ${macroblockAddress}`} onClick={event => selectMacroblockAt(event.clientX, event.clientY)} onKeyDown={event => {
+          let next = macroblockAddress;
+          if (event.key === "ArrowLeft") next--; else if (event.key === "ArrowRight") next++; else if (event.key === "ArrowUp") next -= macroblockColumns; else if (event.key === "ArrowDown") next += macroblockColumns; else return;
+          event.preventDefault(); setSelectedMacroblock(Math.min(macroblockCount - 1, Math.max(0, next)));
+        }} />
+      </div>
+      <div className="zoom-controls" aria-label="画面缩放控制">
+        <button onClick={() => changeZoom(zoom / 1.25)} aria-label="缩小画面">−</button>
+        <b aria-live="polite">{Math.round(zoom * 100)}%</b>
+        <button onClick={() => changeZoom(zoom * 1.25)} aria-label="放大画面">+</button>
+        <button className="fit" onClick={() => { setZoom(1); setZoomOrigin({ x: 50, y: 50 }); }}>适应</button>
+      </div>
       {displayState !== "ready" && <div className={`decode-status ${displayState}`}><i />{displayMessage}</div>}
     </div>
     <div className="frame-controls">
@@ -114,6 +191,15 @@ function DecodedPreview({ bytes, analysis, selected, onSelect }: { bytes: Uint8A
       <input type="range" min="0" max={Math.max(0, frames.length - 1)} value={framePosition} onChange={event => onSelect(frames[Number(event.target.value)])} aria-label="选择解码帧" />
       <button disabled={framePosition >= frames.length - 1} onClick={() => onSelect(frames[framePosition + 1])}>下一帧 →</button>
     </div>
+    <div className="macroblock-toolbar"><button className={showMacroblocks ? "active" : ""} onClick={() => setShowMacroblocks(value => !value)}><i />宏块网格 {showMacroblocks ? "ON" : "OFF"}</button><span>{macroblockColumns} × {macroblockRows} 个 16×16 亮度块 · 点击画面选择</span></div>
+    {showMacroblocks && macroblockCount > 0 && <div className="macroblock-info">
+      <div><span>宏块地址</span><strong>MB {macroblockAddress}</strong><small>栅格扫描顺序</small></div>
+      <div><span>位置</span><strong>R{macroblockRow} / C{macroblockColumn}</strong><small>x {macroblockColumn * 16}–{Math.min((macroblockColumn + 1) * 16 - 1, (analysis.sps?.width ?? 1) - 1)} · y {macroblockRow * 16}–{Math.min((macroblockRow + 1) * 16 - 1, (analysis.sps?.height ?? 1) - 1)}</small></div>
+      <div><span>所属切片</span><strong>{macroblockSlice ? `${macroblockSlice.sliceType}-SLICE` : "—"}</strong><small>{macroblockSlice ? `MB ${macroblockSlice.firstMb}–${sliceEnd}` : "无切片信息"}</small></div>
+      <div><span>块划分</span><strong>16×16 MB</strong><small>子块模式需解析 mb_type</small></div>
+      <div><span>NAL 单元</span><strong>{macroblockSlice ? `#${macroblockSlice.index} · T${macroblockSlice.type}` : "—"}</strong><small>{macroblockSlice ? `ref_idc ${macroblockSlice.refIdc} · 0x${macroblockSlice.offset.toString(16)}` : "—"}</small></div>
+      <div><span>色度覆盖</span><strong>{analysis.sps?.chromaFormat ?? "—"}</strong><small>{analysis.sps?.chromaFormat === "4:2:0" ? "Cb/Cr 各 8×8" : "由 SPS 色度格式决定"}</small></div>
+    </div>}
   </section>;
 }
 
