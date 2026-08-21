@@ -1,0 +1,26 @@
+@import "tailwindcss";
+:root { --ink:#11110f; --paper:#f4f0e7; --acid:#d9ff43; --orange:#ff6b35; }
+* { box-sizing:border-box; }
+html,body { margin:0; min-height:100%; background:var(--paper); color:var(--ink); }
+body { font-family:Arial,"PingFang SC",sans-serif; }
+.shell { min-height:100vh; padding:24px 38px 22px; display:flex; flex-direction:column; }
+.topbar { min-height:62px; display:flex; align-items:center; gap:13px; border-bottom:2px solid var(--ink); }
+.brand-mark { width:38px; height:38px; display:grid; place-items:center; background:var(--ink); color:var(--acid); font:bold 22px Georgia; transform:rotate(-3deg); }
+.topbar strong { display:block; font-size:19px; letter-spacing:-.04em; }
+.topbar span { display:block; font:10px monospace; letter-spacing:.12em; opacity:.58; margin-top:2px; }
+.privacy-pill { margin-left:auto!important; border:1px solid #beb8aa; border-radius:20px; padding:8px 12px; font:11px monospace!important; }
+.privacy-pill i { display:inline-block; width:7px; height:7px; border-radius:50%; background:#32a85a; margin-right:6px; }
+.hero { flex:1; display:grid; grid-template-columns:1.05fr .95fr; gap:7vw; align-items:center; max-width:1280px; width:100%; margin:auto; padding:7vh 0; }
+.eyebrow { font:700 11px monospace; letter-spacing:.18em; border-left:24px solid var(--orange); padding-left:9px; }
+h1 { font-size:clamp(54px,7.3vw,112px); line-height:.86; letter-spacing:-.075em; margin:26px 0; font-weight:800; }
+h1 em { font-family:Georgia,"Songti SC",serif; font-weight:400; color:var(--orange); }
+.intro { max-width:520px; font:17px/1.6 Georgia,"Songti SC",serif; }
+.dropzone { min-height:350px; border:2px solid var(--ink); background:#fffdf8; display:flex; flex-direction:column; justify-content:center; align-items:center; cursor:pointer; box-shadow:13px 13px 0 var(--ink); transition:.2s; }
+.dropzone:hover { transform:translate(-4px,-4px); box-shadow:17px 17px 0 var(--ink); background:var(--acid); }
+.dropzone input { position:absolute; width:1px; height:1px; opacity:0; }
+.drop-icon { width:62px; height:62px; border:2px solid var(--ink); border-radius:50%; display:grid; place-items:center; font-size:34px; margin-bottom:24px; }
+.dropzone b { font-size:20px; }
+.dropzone small { margin-top:10px; font:12px monospace; opacity:.6; }
+footer { border-top:2px solid var(--ink); padding-top:16px; font:bold 10px monospace; letter-spacing:.18em; }
+footer span { float:right; }
+@media(max-width:800px){.shell{padding:18px}.hero{grid-template-columns:1fr;padding:45px 0}.dropzone{min-height:240px;box-shadow:8px 8px 0 var(--ink)}.privacy-pill{display:none}h1{font-size:58px}}
