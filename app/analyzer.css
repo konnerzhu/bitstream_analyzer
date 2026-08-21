@@ -25,7 +25,20 @@ button { cursor:pointer; }
 .stat>span { font:10px monospace; letter-spacing:.12em; text-transform:uppercase; }
 .stat strong { font-size:clamp(22px,2.1vw,33px); letter-spacing:-.045em; margin:auto 0 3px; }
 .stat small { font:10px monospace; opacity:.55; }
-.timeline-card,.nal-card,.detail-card,.distribution-card,.stream-card { border:2px solid var(--ink); background:var(--cream); }
+.decode-card,.timeline-card,.nal-card,.detail-card,.distribution-card,.stream-card { border:2px solid var(--ink); background:var(--cream); }
+.decode-card { margin-top:18px; padding:20px 22px; }
+.canvas-wrap { position:relative; min-height:clamp(240px,46vw,680px); display:grid; place-items:center; overflow:hidden; background:#080807; border:1px solid var(--ink); }
+.canvas-wrap::before { content:""; position:absolute; inset:0; background-image:linear-gradient(rgba(255,255,255,.035) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.035) 1px,transparent 1px); background-size:24px 24px; }
+.canvas-wrap canvas { position:relative; display:block; max-width:100%; max-height:clamp(240px,46vw,680px); width:auto; height:auto; object-fit:contain; }
+.decode-status { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; gap:10px; color:#ddd8cc; background:rgba(8,8,7,.76); font:11px monospace; text-align:center; padding:28px; }
+.decode-status i { width:9px; height:9px; border-radius:50%; background:var(--acid); box-shadow:0 0 0 5px rgba(217,255,67,.14); animation:decode-pulse 1s ease-in-out infinite alternate; }
+.decode-status.error i,.decode-status.unsupported i { background:var(--orange); box-shadow:none; animation:none; }
+@keyframes decode-pulse { to { transform:scale(.55); opacity:.5; } }
+.frame-controls { display:grid; grid-template-columns:auto 1fr auto; align-items:center; gap:16px; margin-top:13px; }
+.frame-controls button { min-height:34px; padding:0 12px; border:1px solid var(--ink); background:var(--paper); font:bold 10px monospace; }
+.frame-controls button:hover:not(:disabled) { background:var(--acid); }
+.frame-controls button:disabled { opacity:.35; cursor:not-allowed; }
+.frame-controls input { width:100%; accent-color:var(--orange); }
 .timeline-card { margin-top:18px; padding:20px 22px; }
 .section-title { display:flex; justify-content:space-between; align-items:center; margin-bottom:18px; }
 .section-title>div { display:flex; align-items:center; gap:10px; }
@@ -66,4 +79,4 @@ pre { margin:0; padding:12px; background:var(--ink); color:var(--acid); white-sp
 .bar-row i { display:block; height:100%; border-right:1px solid var(--ink); }
 .bar-row b { text-align:right; }
 @media(max-width:900px){.stats-grid{grid-template-columns:1fr 1fr}.stat:nth-child(2){border-right:0}.stat:nth-child(-n+2){border-bottom:1px solid var(--ink)}.content-grid{grid-template-columns:1fr}.file-chip{margin-left:auto}.summary-head{padding-top:36px}}
-@media(max-width:560px){.feature-row{display:none}.summary-head{align-items:start}.summary-head .dropzone{min-width:48px;width:48px;padding:0}.summary-head .dropzone b{display:none}.stats-grid{grid-template-columns:1fr}.stat{border-right:0!important;border-bottom:1px solid var(--ink)}.stat:last-child{border-bottom:0}.nal-card{padding:15px 12px}.nal-row{grid-template-columns:42px minmax(150px,1fr) 45px}.nal-row span:nth-child(4),.nal-row span:nth-child(5){display:none}.file-chip{max-width:170px}.topbar{gap:8px}.brand-button>span:last-child{display:none}}
+@media(max-width:560px){.feature-row{display:none}.summary-head{align-items:start}.summary-head .dropzone{min-width:48px;width:48px;padding:0}.summary-head .dropzone b{display:none}.stats-grid{grid-template-columns:1fr}.stat{border-right:0!important;border-bottom:1px solid var(--ink)}.stat:last-child{border-bottom:0}.decode-card{padding:15px 12px}.frame-controls{gap:7px}.frame-controls button{padding:0 7px}.nal-card{padding:15px 12px}.nal-row{grid-template-columns:42px minmax(150px,1fr) 45px}.nal-row span:nth-child(4),.nal-row span:nth-child(5){display:none}.file-chip{max-width:170px}.topbar{gap:8px}.brand-button>span:last-child{display:none}}

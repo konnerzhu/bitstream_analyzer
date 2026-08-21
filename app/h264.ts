@@ -1,6 +1,6 @@
 export type SpsInfo = {
   profileIdc: number; profile: string; level: string; width: number; height: number;
-  chromaFormat: string; bitDepth: number; fps?: number; spsId: number; frameMbsOnly: boolean;
+  chromaFormat: string; bitDepth: number; fps?: number; spsId: number; frameMbsOnly: boolean; codec: string;
 };
 
 export type NalUnit = {
@@ -97,7 +97,7 @@ function parseVui(reader: BitReader) {
 export function parseSps(payload: Uint8Array): SpsInfo {
   const reader = new BitReader(rbsp(payload));
   const profileIdc = reader.readBits(8);
-  reader.readBits(8);
+  const profileCompatibility = reader.readBits(8);
   const levelIdc = reader.readBits(8);
   const spsId = reader.readUE();
   let chromaFormatIdc = 1;
@@ -147,6 +147,7 @@ export function parseSps(payload: Uint8Array): SpsInfo {
     level: (levelIdc / 10).toFixed(1), width, height,
     chromaFormat: chromaNames[chromaFormatIdc] ?? `Chroma ${chromaFormatIdc}`,
     bitDepth, fps, spsId, frameMbsOnly,
+    codec: `avc1.${profileIdc.toString(16).padStart(2, "0")}${profileCompatibility.toString(16).padStart(2, "0")}${levelIdc.toString(16).padStart(2, "0")}`,
   };
 }
 
