@@ -34,8 +34,9 @@ BitScope 是一款可视化 H.264/AVC、H.265/HEVC、H.266/VVC 和 AV1 裸码流
 | **02** | NAL / OBU 时间线 | 编码相关类型、层级、Temporal ID、字节偏移、负载和头部大小 |
 | **03** | 解码画面 | 逐帧显示，并与当前访问单元保持同步 |
 | **04** | 编码块视图 | 随编码格式切换宏块、CTU 或 Superblock 网格，支持点击选择和坐标查看 |
-| **05** | 语法详情 | 序列参数和单元头字段，以及大小受控的十六进制数据视图 |
-| **06** | 本地隐私 | 所有分析均在浏览器内完成，原始码流不会上传 |
+| **05** | H.264 子块 | 显示 CAVLC 宏块类型，以及 16×16、16×8、8×16、8×8、8×4、4×8、4×4 真实分区 |
+| **06** | 语法详情 | 序列参数和单元头字段，以及大小受控的十六进制数据视图 |
+| **07** | 本地隐私 | 所有分析均在浏览器内完成，原始码流不会上传 |
 
 ## 输入格式
 
@@ -57,14 +58,14 @@ BitScope 是一款可视化 H.264/AVC、H.265/HEVC、H.266/VVC 和 AV1 裸码流
 
 | 编码格式 | 当前支持内容 |
 |---|---|
-| H.264 / AVC | SPS Profile、Level、尺寸、帧率、色度/位深；NAL 和 Slice 摘要；16×16 宏块网格 |
+| H.264 / AVC | SPS Profile、Level、尺寸、帧率、色度/位深；NAL 和 Slice 摘要；CAVLC I/P 宏块类型、CBP、ΔQP 和真实分区 |
 | H.265 / HEVC | VPS/SPS/PPS、Profile、Level、尺寸、色度/位深、层级/Temporal ID、IRAP 帧，以及 SPS 声明的 CTU 大小 |
 | H.266 / VVC | NAL 类型、VPS/SPS/PPS/APS/PH/SEI、层级/Temporal ID、随机访问单元和声明的 CTU 大小 |
 | AV1 | OBU 分帧、Sequence Header 的 Profile/Level/尺寸/色度/位深、帧类型、Tile/元数据，以及 64/128 Superblock |
 | 画面 | 浏览器具备对应能力时通过 WebCodecs 解码 AVC、HEVC 或 AV1；VVC 仅进行结构分析 |
 
 > [!NOTE]
-> 编码块覆盖层当前用于结构导航。BitScope 尚未熵解码块划分树、运动矢量、预测模式或残差系数。当 VVC 码流缺少 Picture Header/AUD 时，帧数可能是近似值。
+> H.264 CAVLC I/P 分区来自真实语法解析；不支持的 H.264 模式及其他编码仍仅显示结构网格。当 VVC 码流缺少 Picture Header/AUD 时，帧数可能是近似值。
 
 ## 快速开始
 
@@ -101,6 +102,7 @@ npm run dev
 | `app/Analyzer.tsx` | 分析器 UI、帧解码、导航、缩放和编码块交互 |
 | `app/codecs.ts` | 编码格式检测及 HEVC、VVC、AV1 结构解析 |
 | `app/h264.ts` | Annex-B 扫描、位读取、防竞争字节移除和 H.264 语法解析 |
+| `app/h264-subblocks.ts` | 带边界保护的 H.264 SPS/PPS/Slice 与 CAVLC 宏块/子分区解析 |
 | `app/analyzer.css` | 响应式分析界面与视觉样式 |
 | `public/` | 项目与应用图片资源 |
 
@@ -118,13 +120,15 @@ npm run lint     # 执行静态检查
 
 - 当前支持 Annex-B NAL 裸码流、低开销 AV1 OBU 和 AV1 IVF；尚不包含通用容器解复用。
 - 解码结果取决于浏览器、操作系统以及可用的 AVC/HEVC/AV1 编解码实现；VVC 仅支持分析。
-- 尚未完整熵解码编码块语法，因此暂不显示划分树、运动矢量、参考帧和残差数据。
+- H.264 子块当前支持逐行 8-bit 4:2:0 CAVLC I/P Slice；CABAC、B Slice、FMO、隔行/MBAFF、运动矢量数值与残差系数数值会明确显示为不支持，不会通过推测填充。
+- HEVC、VVC 和 AV1 目前仍只显示顶层编码单元网格，尚未熵解码子分区。
 - 隔行码流和部分少见的参数集组合，可能包含已解析但尚未可视化的字段。
 
 ## 路线图
 
 - [ ] 发布适用于 macOS、Windows 和 Linux 的桌面 GUI 安装包
-- [ ] 解析宏块类型、块划分、预测模式、运动矢量和残差信息
+- [x] 解析 H.264 CAVLC I/P 宏块类型和真实分区
+- [ ] 支持 H.264 CABAC/B Slice、运动矢量、参考帧和残差系数详情
 - [ ] 支持 MP4/MKV/MPEG-TS 解复用和 AVCC 转换
 - [ ] 导出码流分析报告及帧/宏块数据
 - [ ] 深入解析 HEVC、VVC 和 AV1 的 Picture/Slice 语法

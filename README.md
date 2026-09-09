@@ -34,8 +34,9 @@ Drop in an Annex-B NAL stream or a low-overhead AV1 OBU stream and BitScope pars
 | **02** | NAL / OBU timeline | Codec-specific type, layer, temporal ID, byte offset, payload size, and header size |
 | **03** | Decoded picture | Frame-by-frame output synchronized with the selected access unit |
 | **04** | Coding-block view | Codec-aware Macroblock, CTU, or Superblock grid with click selection and coordinates |
-| **05** | Syntax details | Parsed sequence fields and unit headers alongside a bounded hexadecimal view |
-| **06** | Private by design | Analysis stays inside the browser; the source stream is never uploaded |
+| **05** | H.264 subblocks | CAVLC macroblock types and 16×16, 16×8, 8×16, 8×8, 8×4, 4×8, and 4×4 partition overlays |
+| **06** | Syntax details | Parsed sequence fields and unit headers alongside a bounded hexadecimal view |
+| **07** | Private by design | Analysis stays inside the browser; the source stream is never uploaded |
 
 ## Supported input
 
@@ -57,14 +58,14 @@ The current input limit is **200 MB** per file. Parsing is capped at **100,000 N
 
 | Codec | Current coverage |
 |---|---|
-| H.264 / AVC | SPS profile, level, dimensions, timing, chroma/bit depth; NAL and slice summary; 16×16 Macroblock grid |
+| H.264 / AVC | SPS profile, level, dimensions, timing, chroma/bit depth; NAL and slice summary; CAVLC I/P macroblock type, CBP, ΔQP, and partition geometry |
 | H.265 / HEVC | VPS/SPS/PPS detection, profile, level, dimensions, chroma/bit depth, layer/temporal IDs, IRAP frames, and SPS-derived CTU size |
 | H.266 / VVC | NAL type, VPS/SPS/PPS/APS/PH/SEI recognition, layer/temporal IDs, random-access units, and declared CTU size |
 | AV1 | OBU framing, Sequence Header profile/level/dimensions/chroma/bit depth, frame type, tile/metadata units, and 64/128 Superblock size |
 | Pictures | WebCodecs decoding for AVC, HEVC, or AV1 when that codec/configuration is available in the browser; VVC parsing only |
 
 > [!NOTE]
-> The block overlay is a structural navigation aid. BitScope does not yet entropy-decode block partition trees, motion vectors, prediction modes, or residual coefficients. VVC frame counts may be approximate when Picture Header/AUD units are absent.
+> H.264 CAVLC I/P partitions are syntax-derived; unsupported H.264 modes and other codecs retain the structural grid only. VVC frame counts may be approximate when Picture Header/AUD units are absent.
 
 ## Quick start
 
@@ -101,6 +102,7 @@ If WebCodecs or a matching browser decoder is unavailable, bitstream parsing sti
 | `app/Analyzer.tsx` | Analyzer UI, frame decoding, navigation, zoom, and coding-block interaction |
 | `app/codecs.ts` | Codec detection plus HEVC, VVC, and AV1 structural parsing |
 | `app/h264.ts` | Annex-B scanning, bit reading, emulation-prevention removal, and H.264 syntax parsing |
+| `app/h264-subblocks.ts` | Bounded H.264 SPS/PPS/Slice and CAVLC macroblock/subpartition parsing |
 | `app/analyzer.css` | Responsive analyzer layout and visual system |
 | `public/` | Repository and application artwork |
 
@@ -118,13 +120,15 @@ The analyzer is written in TypeScript with React 19 and vinext. Parsing and deco
 
 - Raw Annex-B NAL streams, low-overhead AV1 OBU streams, and AV1 IVF are supported; general-purpose container demuxing is not included.
 - Decoded output depends on the browser, operating system, and available AVC/HEVC/AV1 codec implementation; VVC is analysis-only.
-- Block syntax is not yet fully entropy-decoded, so partitions, motion vectors, references, and residual data are not displayed.
+- H.264 subblock parsing currently covers progressive 8-bit 4:2:0 CAVLC I/P slices. CABAC, B slices, FMO, interlaced/MBAFF pictures, motion-vector values, and residual coefficient values are reported as unsupported rather than inferred.
+- HEVC, VVC, and AV1 still show their top-level coding-unit grid without entropy-decoded subpartitions.
 - Interlaced streams and less common parameter-set combinations may expose fields that are parsed but not visualized.
 
 ## Roadmap
 
 - [ ] Ship installable desktop GUI packages for macOS, Windows, and Linux
-- [ ] Decode macroblock type, partitions, prediction modes, motion vectors, and residual information
+- [x] Decode H.264 CAVLC I/P macroblock types and partition geometry
+- [ ] Add H.264 CABAC/B-slice support, motion vectors, references, and residual coefficient details
 - [ ] Add MP4/MKV/MPEG-TS demuxing and AVCC conversion
 - [ ] Export analysis reports and frame/block data
 - [ ] Add deeper HEVC, VVC, and AV1 picture/slice syntax parsing

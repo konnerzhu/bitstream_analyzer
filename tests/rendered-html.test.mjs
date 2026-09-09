@@ -41,5 +41,7 @@ test("declares each supported elementary-stream format", async () => {
   }
   assert.match(analyzer, /analyzeBitstream\(bytes, file\.name\)/);
   assert.match(analyzer, /analysis\.blockSize/);
+  assert.match(analyzer, /analyzeH264Subblocks/);
+  assert.match(analyzer, /parsedMacroblock\.partitions/);
   assert.match(analyzer, /unitColor\(unit\.type, analysis\.codecKind\)/);
 });

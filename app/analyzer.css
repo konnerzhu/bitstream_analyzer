@@ -53,7 +53,7 @@ button { cursor:pointer; }
 .macroblock-toolbar button.active { background:var(--acid); }
 .macroblock-toolbar button i { width:7px; height:7px; border-radius:50%; background:var(--ink); }
 .macroblock-toolbar>span { font:10px monospace; opacity:.58; text-align:right; }
-.macroblock-info { display:grid; grid-template-columns:repeat(6,1fr); margin-top:12px; border:1px solid var(--ink); }
+.macroblock-info { display:grid; grid-template-columns:repeat(auto-fit,minmax(135px,1fr)); margin-top:12px; border:1px solid var(--ink); }
 .macroblock-info>div { min-height:86px; padding:12px; border-right:1px solid var(--ink); display:flex; flex-direction:column; }
 .macroblock-info>div:last-child { border-right:0; }
 .macroblock-info span { font:9px monospace; letter-spacing:.08em; opacity:.58; }

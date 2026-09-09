@@ -61,6 +61,17 @@ export class BitReader {
     const code = this.readUE();
     return code & 1 ? (code + 1) / 2 : -(code / 2);
   }
+  get position() { return this.bit; }
+  get bitsRemaining() { return this.data.length * 8 - this.bit; }
+  align() { this.bit = Math.min(this.data.length * 8, (this.bit + 7) & ~7); }
+  moreRbspData() {
+    if (this.bitsRemaining <= 0) return false;
+    if (((this.data[this.bit >> 3] >> (7 - (this.bit & 7))) & 1) === 0) return true;
+    for (let position = this.bit + 1; position < this.data.length * 8; position++) {
+      if (((this.data[position >> 3] >> (7 - (position & 7))) & 1) !== 0) return true;
+    }
+    return false;
+  }
 }
 
 export function rbsp(data: Uint8Array) {
