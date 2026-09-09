@@ -9,8 +9,8 @@ export async function generateMetadata(): Promise<Metadata> {
   const host = /^[a-z0-9.:-]+$/i.test(rawHost) ? rawHost : "localhost:3000";
   const protocol = requestHeaders.get("x-forwarded-proto") === "https" ? "https" : host.startsWith("localhost") ? "http" : "https";
   const image = `${protocol}://${host}/og.png`;
-  const title = "BitScope · H.264 码流分析器";
-  const description = "在浏览器本地解析 H.264 Annex-B 码流，查看 SPS、PPS、NAL 与帧结构。";
+  const title = "BitScope · 多编码码流分析器";
+  const description = "在浏览器本地分析 H.264、H.265、H.266 和 AV1 码流，查看参数集、NAL/OBU、帧结构与编码块。";
   return {
     title, description,
     openGraph: { title, description, images: [{ url: image, width: 1200, height: 630 }] },

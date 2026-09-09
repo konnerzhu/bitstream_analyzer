@@ -1,12 +1,12 @@
 <p align="center">
-  <img src="public/og.png" alt="BitScope H.264 Bitstream Analyzer" width="900">
+  <img src="public/og.png" alt="BitScope multi-codec bitstream analyzer" width="900">
 </p>
 
 <h1 align="center">BitScope</h1>
 
 <p align="center">
-  <strong>H.264 bitstreams, made legible.</strong><br>
-  Inspect stream structure, decoded pictures, NAL units, and macroblocks—right in your browser.
+  <strong>Compressed video bitstreams, made legible.</strong><br>
+  Inspect AVC, HEVC, VVC, and AV1 structure—right in your browser.
 </p>
 
 <p align="center">
@@ -14,7 +14,7 @@
 </p>
 
 <p align="center">
-  <img alt="H.264 Annex-B" src="https://img.shields.io/badge/input-H.264%20Annex--B-1f6feb?style=flat-square">
+  <img alt="Supported codecs" src="https://img.shields.io/badge/codecs-AVC%20%7C%20HEVC%20%7C%20VVC%20%7C%20AV1-1f6feb?style=flat-square">
   <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5.9-3178c6?style=flat-square&logo=typescript&logoColor=white">
   <img alt="React" src="https://img.shields.io/badge/React-19-149eca?style=flat-square&logo=react&logoColor=white">
   <img alt="Local processing" src="https://img.shields.io/badge/processing-100%25%20local-2ea44f?style=flat-square">
@@ -22,19 +22,19 @@
 
 ## What is BitScope?
 
-BitScope is a visual H.264 elementary-stream analyzer for developers, codec engineers, students, and anyone who wants to understand what is inside a compressed video stream.
+BitScope is a visual H.264/AVC, H.265/HEVC, H.266/VVC, and AV1 elementary-stream analyzer for developers, codec engineers, students, and anyone who wants to understand what is inside a compressed video stream.
 
-Drop in a raw Annex-B stream and BitScope parses it locally, presents the stream metadata and NAL layout, decodes pictures when the browser supports WebCodecs, and keeps the syntax view synchronized with the selected frame. No file upload or server-side processing is involved.
+Drop in an Annex-B NAL stream or a low-overhead AV1 OBU stream and BitScope parses it locally, presents stream metadata and unit layout, decodes pictures when the browser supports the codec through WebCodecs, and keeps the syntax view synchronized with the selected frame. No file upload or server-side processing is involved.
 
 ## Highlights
 
 | | Capability | What you can inspect |
 |---|---|---|
 | **01** | Stream summary | Profile, level, coded/display size, frame rate, chroma format, and bit depth |
-| **02** | NAL timeline | Type, reference priority, byte offset, payload size, and start-code size |
+| **02** | NAL / OBU timeline | Codec-specific type, layer, temporal ID, byte offset, payload size, and header size |
 | **03** | Decoded picture | Frame-by-frame output synchronized with the selected access unit |
-| **04** | Macroblock view | Zoomable 16×16 grid, click selection, position, address, and inferred slice ownership |
-| **05** | Syntax details | Parsed SPS and slice-header fields alongside a bounded hexadecimal view |
+| **04** | Coding-block view | Codec-aware Macroblock, CTU, or Superblock grid with click selection and coordinates |
+| **05** | Syntax details | Parsed sequence fields and unit headers alongside a bounded hexadecimal view |
 | **06** | Private by design | Analysis stays inside the browser; the source stream is never uploaded |
 
 ## Supported input
@@ -42,25 +42,28 @@ Drop in a raw Annex-B stream and BitScope parses it locally, presents the stream
 | Format | Status | Notes |
 |---|:---:|---|
 | Raw H.264 Annex-B (`.h264`, `.264`, `.avc`) | ✅ | 3-byte and 4-byte start codes |
-| MP4 / MOV | — | Extract the H.264 elementary stream first |
+| Raw H.265 Annex-B (`.h265`, `.265`, `.hevc`) | ✅ | VPS/SPS/PPS, VCL units, layers, and CTU size |
+| Raw H.266 Annex-B (`.h266`, `.266`, `.vvc`) | ✅ | Structural NAL analysis; browser decoding is not available |
+| Low-overhead AV1 OBU (`.av1`, `.obu`) | ✅ | Sized OBUs, Sequence Header, frames, tiles, and metadata |
+| MP4 / MOV | — | Extract the elementary stream first |
 | MKV / WebM | — | Container demuxing is not implemented yet |
 | MPEG-TS | — | Container demuxing is not implemented yet |
-| AVCC length-prefixed H.264 | — | Annex-B input is currently required |
+| Length-prefixed AVC/HEVC/VVC | — | Annex-B input is currently required |
 
-The current input limit is **200 MB** per file. Parsing is capped at **100,000 NAL units** to keep the interface responsive on malformed or unusually large streams.
+The current input limit is **200 MB** per file. Parsing is capped at **100,000 NAL/OBU units** to keep the interface responsive on malformed or unusually large streams.
 
 ## Analysis coverage
 
-| Layer | Current coverage |
+| Codec | Current coverage |
 |---|---|
-| SPS | Profile, constraint flags, level, coded/display dimensions, cropping, frame rate, chroma format, bit depths, frame numbering, and POC configuration |
-| NAL units | Type, `nal_ref_idc`, byte range, size, start code, and RBSP-oriented detail view |
-| Slice headers | First macroblock, slice type, PPS ID, frame number, field flags, IDR picture ID, and selected POC fields |
-| Pictures | Browser decoding through WebCodecs when an H.264 decoder is available |
-| Macroblocks | 16×16 spatial grid, address/coordinates, boundary handling, and inferred slice range |
+| H.264 / AVC | SPS profile, level, dimensions, timing, chroma/bit depth; NAL and slice summary; 16×16 Macroblock grid |
+| H.265 / HEVC | VPS/SPS/PPS detection, profile, level, dimensions, chroma/bit depth, layer/temporal IDs, IRAP frames, and SPS-derived CTU size |
+| H.266 / VVC | NAL type, VPS/SPS/PPS/APS/PH/SEI recognition, layer/temporal IDs, random-access units, and declared CTU size |
+| AV1 | OBU framing, Sequence Header profile/level/dimensions/chroma/bit depth, frame type, tile/metadata units, and 64/128 Superblock size |
+| Pictures | WebCodecs decoding for AVC, HEVC, or AV1 when that codec/configuration is available in the browser; VVC parsing only |
 
 > [!NOTE]
-> The macroblock overlay is a structural navigation aid. BitScope does not yet entropy-decode `mb_type`, sub-partitions, motion vectors, prediction modes, or residual coefficients.
+> The block overlay is a structural navigation aid. BitScope does not yet entropy-decode block partition trees, motion vectors, prediction modes, or residual coefficients. VVC frame counts may be approximate when Picture Header/AUD units are absent.
 
 ## Quick start
 
@@ -75,26 +78,27 @@ npm install
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000), then drag a raw H.264 stream onto the drop zone or choose one from disk.
+Open [http://localhost:3000](http://localhost:3000), then drag a supported elementary stream onto the drop zone or choose one from disk.
 
 > [!IMPORTANT]
 > These are developer commands. A self-contained desktop GUI package that does not require Node.js is planned, but is not published yet.
 
 ## Using the analyzer
 
-1. Load a raw Annex-B H.264 file.
-2. Select a frame or NAL unit from the timeline/list.
+1. Load an AVC/HEVC/VVC Annex-B stream or an AV1 OBU stream.
+2. Select a frame, NAL unit, or OBU from the timeline/list.
 3. Inspect the synchronized decoded picture and syntax panel.
-4. Enable the macroblock overlay and click a block to view its address, coordinates, bounds, and slice association.
+4. Enable the coding-block overlay and click a block to view its address, coordinates, bounds, and available slice association.
 5. Scroll the mouse wheel over the picture to zoom from **50% to 800%**; use **Fit** to return to the available viewport.
 
-If WebCodecs or an H.264 decoder is unavailable, bitstream parsing still works, but decoded-picture display is disabled.
+If WebCodecs or a matching browser decoder is unavailable, bitstream parsing still works, but decoded-picture display is disabled. H.266/VVC currently has no WebCodecs decoding path.
 
 ## Project layout
 
 | Path | Purpose |
 |---|---|
-| `app/Analyzer.tsx` | Analyzer UI, frame decoding, navigation, zoom, and macroblock interaction |
+| `app/Analyzer.tsx` | Analyzer UI, frame decoding, navigation, zoom, and coding-block interaction |
+| `app/codecs.ts` | Codec detection plus HEVC, VVC, and AV1 structural parsing |
 | `app/h264.ts` | Annex-B scanning, bit reading, emulation-prevention removal, and H.264 syntax parsing |
 | `app/analyzer.css` | Responsive analyzer layout and visual system |
 | `public/` | Repository and application artwork |
@@ -111,9 +115,9 @@ The analyzer is written in TypeScript with React 19 and vinext. Parsing and deco
 
 ## Known limitations
 
-- Raw Annex-B elementary streams only; container demuxing is not included.
-- Decoded output depends on the browser, operating system, and available H.264 codec implementation.
-- Macroblock syntax is not yet fully entropy-decoded, so block type, motion vectors, references, and residual data are not displayed.
+- Raw Annex-B NAL streams and low-overhead AV1 OBU streams only; container demuxing is not included.
+- Decoded output depends on the browser, operating system, and available AVC/HEVC/AV1 codec implementation; VVC is analysis-only.
+- Block syntax is not yet fully entropy-decoded, so partitions, motion vectors, references, and residual data are not displayed.
 - Interlaced streams and less common parameter-set combinations may expose fields that are parsed but not visualized.
 
 ## Roadmap
@@ -122,7 +126,7 @@ The analyzer is written in TypeScript with React 19 and vinext. Parsing and deco
 - [ ] Decode macroblock type, partitions, prediction modes, motion vectors, and residual information
 - [ ] Add MP4/MKV/MPEG-TS demuxing and AVCC conversion
 - [ ] Export analysis reports and frame/block data
-- [ ] Extend the analyzer architecture to HEVC and AV1
+- [ ] Add deeper HEVC, VVC, and AV1 picture/slice syntax parsing
 
 ## Contributing
 

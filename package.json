@@ -1,5 +1,5 @@
 {
-  "name": "bitscope-h264-analyzer",
+  "name": "bitscope-bitstream-analyzer",
   "version": "0.1.0",
   "private": true,
   "engines": {

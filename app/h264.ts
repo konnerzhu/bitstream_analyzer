@@ -1,16 +1,23 @@
 export type SpsInfo = {
   profileIdc: number; profile: string; level: string; width: number; height: number;
   chromaFormat: string; bitDepth: number; fps?: number; spsId: number; frameMbsOnly: boolean; codec: string;
+  blockSize?: number;
 };
+
+export type CodecKind = "h264" | "h265" | "h266" | "av1";
 
 export type NalUnit = {
   index: number; offset: number; size: number; startCodeSize: number; type: number;
   typeName: string; refIdc: number; sliceType?: string; firstMb?: number; hex: string;
+  headerSize?: number; keyFrame?: boolean; frameStart?: boolean; layerId?: number; temporalId?: number;
+  fields?: Record<string, string | number | boolean>;
 };
 
 export type Analysis = {
   units: NalUnit[]; sps?: SpsInfo; duration?: number; frameCount: number;
   idrCount: number; totalBytes: number; counts: Map<number, number>;
+  codecKind: CodecKind; codecName: string; unitName: "NAL" | "OBU"; blockName: string;
+  blockSize: number; parameterSetTypes: number[]; parameterSetName: string;
 };
 
 const NAL_NAMES = new Map<number, string>([
@@ -25,7 +32,7 @@ const PROFILES = new Map<number, string>([
   [122, "High 4:2:2"], [244, "High 4:4:4 Predictive"], [44, "CAVLC 4:4:4"],
 ]);
 
-class BitReader {
+export class BitReader {
   private bit = 0;
   constructor(private readonly data: Uint8Array) {}
   readBit() {
@@ -54,7 +61,7 @@ class BitReader {
   }
 }
 
-function rbsp(data: Uint8Array) {
+export function rbsp(data: Uint8Array) {
   const out: number[] = [];
   let zeros = 0;
   for (const byte of data) {
@@ -151,7 +158,7 @@ export function parseSps(payload: Uint8Array): SpsInfo {
   };
 }
 
-function findStartCodes(bytes: Uint8Array) {
+export function findStartCodes(bytes: Uint8Array) {
   const starts: { offset: number; size: number }[] = [];
   for (let i = 0; i + 3 < bytes.length;) {
     if (bytes[i] === 0 && bytes[i + 1] === 0 && bytes[i + 2] === 1) {
@@ -164,7 +171,7 @@ function findStartCodes(bytes: Uint8Array) {
   return starts;
 }
 
-function hexPreview(data: Uint8Array, max = 48) {
+export function hexPreview(data: Uint8Array, max = 48) {
   return Array.from(data.subarray(0, Math.min(max, data.length)), b => b.toString(16).padStart(2, "0")).join(" ");
 }
 
@@ -203,16 +210,21 @@ export function analyzeH264(bytes: Uint8Array): Analysis {
     }
     const slice = type >= 1 && type <= 5 ? parseSlice(payload) : {};
     if (type >= 1 && type <= 5 && slice.firstMb === 0) frameCount++;
-    if (type === 5) idrCount++;
+    if (type === 5 && slice.firstMb === 0) idrCount++;
     counts.set(type, (counts.get(type) ?? 0) + 1);
     units.push({
       index: units.length, offset: start.offset, size: end - start.offset,
       startCodeSize: start.size, type, typeName: NAL_NAMES.get(type) ?? `保留类型 ${type}`,
-      refIdc, ...slice, hex: hexPreview(bytes.subarray(start.offset, end)),
+      refIdc, headerSize: 1, keyFrame: type === 5, frameStart: type >= 1 && type <= 5 && slice.firstMb === 0,
+      ...slice, hex: hexPreview(bytes.subarray(start.offset, end)),
     });
   }
   const duration = sps?.fps ? frameCount / sps.fps : undefined;
-  return { units, sps, duration, frameCount, idrCount, totalBytes: bytes.length, counts };
+  return {
+    units, sps, duration, frameCount, idrCount, totalBytes: bytes.length, counts,
+    codecKind: "h264", codecName: "H.264 / AVC", unitName: "NAL", blockName: "宏块",
+    blockSize: 16, parameterSetTypes: [7, 8], parameterSetName: "SPS 参数",
+  };
 }
 
 export function nalColor(type: number) {
