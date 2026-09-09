@@ -2,29 +2,45 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-async function render() {
+async function render(pathname = "/") {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
   workerUrl.searchParams.set("test", `${process.pid}-${Date.now()}`);
   const { default: worker } = await import(workerUrl.href);
 
   return worker.fetch(
-    new Request("http://localhost/", { headers: { accept: "text/html" } }),
+    new Request(`http://localhost${pathname}`, { headers: { accept: "text/html" } }),
     { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } },
     { waitUntil() {}, passThroughOnException() {} },
   );
 }
 
-test("server-renders the multi-codec analyzer", async () => {
+test("server-renders the English analyzer at the root route", async () => {
   const response = await render();
   assert.equal(response.status, 200);
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
 
   const html = await response.text();
+  assert.match(html, /<html[^>]*lang="en"/);
   assert.match(html, /BitScope/);
   assert.match(html, /AVC · HEVC · VVC · AV1/);
   assert.match(html, /H\.264 · H\.265 · H\.266 · AV1/);
+  assert.match(html, /LOCAL ANALYSIS · FILES NEVER LEAVE YOUR DEVICE/);
+  assert.match(html, /MULTI-CODEC BITSTREAM ANALYZER/);
+  assert.match(html, /href="\/zh-CN"/);
+  assert.match(html, /hreflang="zh-CN"/i);
+});
+
+test("server-renders the Simplified Chinese analyzer at its locale route", async () => {
+  const response = await render("/zh-CN");
+  assert.equal(response.status, 200);
+
+  const html = await response.text();
+  assert.match(html, /<html[^>]*lang="zh-CN"/);
   assert.match(html, /本地解析 · 文件不会上传/);
   assert.match(html, /多编码码流分析器/);
+  assert.match(html, /拖放视频码流到这里/);
+  assert.match(html, /href="\/"/);
+  assert.match(html, /hreflang="en"/i);
 });
 
 test("declares each supported elementary-stream format", async () => {

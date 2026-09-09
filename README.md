@@ -82,6 +82,8 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000), then drag a supported elementary stream onto the drop zone or choose one from disk.
 
+The English interface is available at [`/`](http://localhost:3000/), and the Simplified Chinese interface is available at [`/zh-CN`](http://localhost:3000/zh-CN). Both routes share the same analyzer and can be switched from the header.
+
 > [!IMPORTANT]
 > These are developer commands. A self-contained desktop GUI package that does not require Node.js is planned, but is not published yet.
 
@@ -100,6 +102,8 @@ If WebCodecs or a matching browser decoder is unavailable, bitstream parsing sti
 | Path | Purpose |
 |---|---|
 | `app/Analyzer.tsx` | Analyzer UI, frame decoding, navigation, zoom, and coding-block interaction |
+| `app/i18n.ts` | Type-safe English and Simplified Chinese interface copy |
+| `app/(english)/` / `app/zh-CN/` | Locale-specific routes, metadata, and document language |
 | `app/codecs.ts` | Codec detection plus HEVC, VVC, and AV1 structural parsing |
 | `app/h264.ts` | Annex-B scanning, bit reading, emulation-prevention removal, and H.264 syntax parsing |
 | `app/h264-subblocks.ts` | Bounded H.264 SPS/PPS/Slice and CAVLC macroblock/subpartition parsing |

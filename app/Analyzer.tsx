@@ -4,24 +4,27 @@ import { ChangeEvent, DragEvent, useEffect, useMemo, useRef, useState } from "re
 import { Analysis, CodecKind, NalUnit, SUPPORTED_EXTENSIONS, analyzeBitstream, formatBytes, unitColor } from "./codecs";
 import { analyzeH264Subblocks } from "./h264-subblocks";
 import { Av1SubblockAnalysis, inspectAv1Subblocks } from "./av1-subblocks";
+import { Locale, getCopy, localizeBlockName, localizeParameterSetName, localizeTypeName } from "./i18n";
 
 const MAX_FILE_SIZE = 200 * 1024 * 1024;
 const ACCEPTED_FILES = ".h264,.264,.avc,.h265,.265,.hevc,.h266,.266,.vvc,.av1,.obu,.ivf,video/h264,video/h265,video/av1";
 
-function validateFile(file: File) {
+function validateFile(file: File, locale: Locale) {
+  const copy = getCopy(locale);
   const lower = file.name.toLowerCase();
-  if (!SUPPORTED_EXTENSIONS.some(ext => lower.endsWith(ext))) throw new Error("请选择 H.264/H.265/H.266 Annex-B 裸码流、AV1 OBU 或 IVF 文件");
-  if (file.size === 0) throw new Error("文件是空的");
-  if (file.size > MAX_FILE_SIZE) throw new Error("文件超过 200 MB 上限");
+  if (!SUPPORTED_EXTENSIONS.some(ext => lower.endsWith(ext))) throw new Error(copy.invalidFile);
+  if (file.size === 0) throw new Error(copy.emptyFile);
+  if (file.size > MAX_FILE_SIZE) throw new Error(copy.fileTooLarge);
 }
 
-function UploadPanel({ onFile, compact = false }: { onFile: (file: File) => void; compact?: boolean }) {
+function UploadPanel({ onFile, locale, compact = false }: { onFile: (file: File) => void; locale: Locale; compact?: boolean }) {
+  const copy = getCopy(locale);
   const [dragging, setDragging] = useState(false);
   const input = useRef<HTMLInputElement>(null);
   const accept = (files: FileList | null) => { if (files?.[0]) onFile(files[0]); };
-  return <div className={`dropzone ${dragging ? "dragging" : ""} ${compact ? "compact" : ""}`} role="button" tabIndex={0} aria-label="选择视频码流文件" onClick={() => input.current?.click()} onKeyDown={e => { if (e.key === "Enter" || e.key === " ") input.current?.click(); }} onDragOver={(e: DragEvent) => { e.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)} onDrop={(e: DragEvent) => { e.preventDefault(); setDragging(false); accept(e.dataTransfer.files); }}>
+  return <div className={`dropzone ${dragging ? "dragging" : ""} ${compact ? "compact" : ""}`} role="button" tabIndex={0} aria-label={copy.chooseFileAria} onClick={() => input.current?.click()} onKeyDown={e => { if (e.key === "Enter" || e.key === " ") input.current?.click(); }} onDragOver={(e: DragEvent) => { e.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)} onDrop={(e: DragEvent) => { e.preventDefault(); setDragging(false); accept(e.dataTransfer.files); }}>
     <input ref={input} type="file" accept={ACCEPTED_FILES} onChange={(e: ChangeEvent<HTMLInputElement>) => accept(e.target.files)} />
-    <span className="drop-icon">↓</span><b>{compact ? "打开另一个文件" : "拖放视频码流到这里"}</b>{!compact && <small>H.264 · H.265 · H.266 · AV1/IVF · 最大 200 MB</small>}
+    <span className="drop-icon">↓</span><b>{compact ? copy.openAnother : copy.dropFile}</b>{!compact && <small>{copy.fileFormats}</small>}
   </div>;
 }
 
@@ -31,12 +34,13 @@ function Stat({ label, value, note }: { label: string; value: string; note?: str
 
 function NalBadge({ unit, codec }: { unit: NalUnit; codec: CodecKind }) { return <span className="nal-badge" style={{ background: unitColor(unit.type, codec) }}>{codec === "av1" ? "O" : "T"}{unit.type}</span>; }
 
-function DecodedPreview({ bytes, analysis, selected, onSelect }: { bytes: Uint8Array; analysis: Analysis; selected: NalUnit | null; onSelect: (unit: NalUnit) => void }) {
+function DecodedPreview({ bytes, analysis, selected, onSelect, locale }: { bytes: Uint8Array; analysis: Analysis; selected: NalUnit | null; onSelect: (unit: NalUnit) => void; locale: Locale }) {
+  const copy = getCopy(locale);
   const canvas = useRef<HTMLCanvasElement>(null);
   const macroblockCanvas = useRef<HTMLCanvasElement>(null);
   const canvasWrap = useRef<HTMLDivElement>(null);
   const [state, setState] = useState<"decoding" | "ready" | "unsupported" | "error">("decoding");
-  const [message, setMessage] = useState("正在初始化解码器…");
+  const [message, setMessage] = useState(copy.decoderInitializing);
   const [showMacroblocks, setShowMacroblocks] = useState(true);
   const [selectedMacroblock, setSelectedMacroblock] = useState(0);
   const [selectedAv1Block, setSelectedAv1Block] = useState(0);
@@ -67,7 +71,11 @@ function DecodedPreview({ bytes, analysis, selected, onSelect }: { bytes: Uint8A
   const av1LeafBlock = av1Subblocks?.status === "ready" ? av1Subblocks.blocks[selectedAv1Block] : undefined;
   const blockUnit = analysis.codecKind === "av1" ? target : macroblockSlice;
   const sliceEnd = Math.min(macroblockCount - 1, (frameSlices[slicePosition + 1]?.firstMb ?? macroblockCount) - 1);
-  const unavailableMessage = analysis.codecKind === "h266" ? "当前 WebCodecs 尚未提供 H.266/VVC 解码能力" : !analysis.sps ? `码流缺少可用的 ${analysis.parameterSetName}，无法配置解码器` : typeof VideoDecoder === "undefined" ? "当前浏览器不支持 WebCodecs VideoDecoder" : "";
+  const blockName = localizeBlockName(analysis.blockName, locale);
+  const parameterSetName = localizeParameterSetName(analysis.parameterSetName, locale);
+  const h264StatusMessage = h264Subblocks ? locale === "en" ? `${h264Subblocks.parsedCount.toLocaleString("en-US")} macroblocks parsed${h264Subblocks.status === "partial" ? " · partial result" : ""}` : h264Subblocks.message : "";
+  const av1StatusMessage = av1Subblocks?.status === "ready" ? locale === "en" ? `libaom inspection · ${av1Subblocks.blocks.length.toLocaleString("en-US")} entropy-decoded leaf blocks` : av1Subblocks.message : av1Subblocks ? locale === "en" ? "AV1 leaf-block inspection is unavailable for this file" : av1Subblocks.message : copy.waitingForAv1;
+  const unavailableMessage = analysis.codecKind === "h266" ? copy.vvcUnsupported : !analysis.sps ? `${copy.missingDecoderConfig} ${parameterSetName}` : typeof VideoDecoder === "undefined" ? copy.webCodecsUnsupported : "";
 
   useEffect(() => {
     let cancelled = false;
@@ -175,10 +183,10 @@ function DecodedPreview({ bytes, analysis, selected, onSelect }: { bytes: Uint8A
     let decoder: VideoDecoder | null = null;
     if (!target || unavailableMessage) return;
     const decode = async () => {
-      setState("decoding"); setMessage(`正在解码第 ${framePosition + 1} 帧…`);
+      setState("decoding"); setMessage(locale === "en" ? `${copy.decodingFrame} ${framePosition + 1}…` : `${copy.decodingFrame} ${framePosition + 1} 帧…`);
       const config: VideoDecoderConfig = { codec: analysis.sps!.codec, codedWidth: analysis.sps!.width, codedHeight: analysis.sps!.height, optimizeForLatency: true };
       const support = await VideoDecoder.isConfigSupported(config);
-      if (!support.supported) throw new Error(`浏览器不支持 ${analysis.sps!.codec} 解码`);
+      if (!support.supported) throw new Error(`${copy.browserCodecUnsupported} ${analysis.sps!.codec}`);
       const targetTimestamp = target.timestamp ?? Math.round(framePosition * 1_000_000 / (analysis.sps!.fps ?? 30));
       let rendered = false;
       decoder = new VideoDecoder({
@@ -192,7 +200,7 @@ function DecodedPreview({ bytes, analysis, selected, onSelect }: { bytes: Uint8A
           }
           frame.close();
         },
-        error: error => { if (!cancelled) { setState("error"); setMessage(error.message || `${analysis.codecName} 解码失败`); } },
+        error: error => { if (!cancelled) { setState("error"); setMessage(error.message || `${analysis.codecName} ${copy.decodeFailed}`); } },
       });
       decoder.configure(support.config ?? config);
       let decodeStart = framePosition;
@@ -227,21 +235,21 @@ function DecodedPreview({ bytes, analysis, selected, onSelect }: { bytes: Uint8A
         }));
       }
       await decoder.flush();
-      if (!cancelled && !rendered) throw new Error("目标帧未产生可显示的图像");
+      if (!cancelled && !rendered) throw new Error(copy.targetNotRendered);
     };
-    decode().catch(error => { if (!cancelled) { setState("error"); setMessage(error instanceof Error ? error.message : `${analysis.codecName} 解码失败`); } });
+    decode().catch(error => { if (!cancelled) { setState("error"); setMessage(error instanceof Error ? error.message : `${analysis.codecName} ${copy.decodeFailed}`); } });
     return () => { cancelled = true; if (decoder && decoder.state !== "closed") decoder.close(); };
-  }, [analysis, bytes, framePosition, frames, target, unavailableMessage]);
+  }, [analysis, bytes, copy, framePosition, frames, locale, target, unavailableMessage]);
 
   const displayState = unavailableMessage || !target ? "unsupported" : state;
-  const displayMessage = unavailableMessage || (!target ? "码流中没有可解码的视频帧" : message);
+  const displayMessage = unavailableMessage || (!target ? copy.noDecodableFrames : message);
 
   return <section className="decode-card">
-    <div className="section-title"><div><span>01</span><h3>解码画面</h3></div><small>{target ? `FRAME ${framePosition + 1} / ${frames.length} · ${analysis.unitName} #${target.index}` : "NO FRAME"}</small></div>
-    <div ref={canvasWrap} className="canvas-wrap" title="在画面上滚动鼠标以缩放">
+    <div className="section-title"><div><span>01</span><h3>{copy.decodedPicture}</h3></div><small>{target ? `FRAME ${framePosition + 1} / ${frames.length} · ${analysis.unitName} #${target.index}` : copy.noFrame}</small></div>
+    <div ref={canvasWrap} className="canvas-wrap" title={copy.wheelZoom}>
       <div className="frame-stage" style={{ transform: `scale(${zoom})`, transformOrigin: `${zoomOrigin.x}% ${zoomOrigin.y}%` }}>
-        <canvas ref={canvas} aria-label="当前选择位置的解码画面" />
-        <canvas ref={macroblockCanvas} className={`macroblock-overlay ${showMacroblocks ? "visible" : ""}`} role="button" tabIndex={showMacroblocks ? 0 : -1} aria-label={`${analysis.blockName}网格，当前选择 ${analysis.codecKind === "av1" && av1LeafBlock ? `叶子块 ${av1LeafBlock.id}` : macroblockAddress}`} onClick={event => selectMacroblockAt(event.clientX, event.clientY)} onKeyDown={event => {
+        <canvas ref={canvas} aria-label={copy.decodedCanvas} />
+        <canvas ref={macroblockCanvas} className={`macroblock-overlay ${showMacroblocks ? "visible" : ""}`} role="button" tabIndex={showMacroblocks ? 0 : -1} aria-label={`${blockName} ${copy.gridSelection} ${analysis.codecKind === "av1" && av1LeafBlock ? `${copy.leafBlock} ${av1LeafBlock.id}` : macroblockAddress}`} onClick={event => selectMacroblockAt(event.clientX, event.clientY)} onKeyDown={event => {
           let next = macroblockAddress;
           if (event.key === "ArrowLeft") next--; else if (event.key === "ArrowRight") next++; else if (event.key === "ArrowUp") next -= macroblockColumns; else if (event.key === "ArrowDown") next += macroblockColumns; else return;
           event.preventDefault();
@@ -253,34 +261,36 @@ function DecodedPreview({ bytes, analysis, selected, onSelect }: { bytes: Uint8A
           }
         }} />
       </div>
-      <div className="zoom-controls" aria-label="画面缩放控制">
-        <button onClick={() => changeZoom(zoom / 1.25)} aria-label="缩小画面">−</button>
+      <div className="zoom-controls" aria-label={copy.zoomControls}>
+        <button onClick={() => changeZoom(zoom / 1.25)} aria-label={copy.zoomOut}>−</button>
         <b aria-live="polite">{Math.round(zoom * 100)}%</b>
-        <button onClick={() => changeZoom(zoom * 1.25)} aria-label="放大画面">+</button>
-        <button className="fit" onClick={() => { setZoom(1); setZoomOrigin({ x: 50, y: 50 }); }}>适应</button>
+        <button onClick={() => changeZoom(zoom * 1.25)} aria-label={copy.zoomIn}>+</button>
+        <button className="fit" onClick={() => { setZoom(1); setZoomOrigin({ x: 50, y: 50 }); }}>{copy.fit}</button>
       </div>
       {displayState !== "ready" && <div className={`decode-status ${displayState}`}><i />{displayMessage}</div>}
     </div>
     <div className="frame-controls">
-      <button disabled={framePosition <= 0} onClick={() => onSelect(frames[framePosition - 1])}>← 上一帧</button>
-      <input type="range" min="0" max={Math.max(0, frames.length - 1)} value={framePosition} onChange={event => onSelect(frames[Number(event.target.value)])} aria-label="选择解码帧" />
-      <button disabled={framePosition >= frames.length - 1} onClick={() => onSelect(frames[framePosition + 1])}>下一帧 →</button>
+      <button disabled={framePosition <= 0} onClick={() => onSelect(frames[framePosition - 1])}>{copy.previousFrame}</button>
+      <input type="range" min="0" max={Math.max(0, frames.length - 1)} value={framePosition} onChange={event => onSelect(frames[Number(event.target.value)])} aria-label={copy.selectFrame} />
+      <button disabled={framePosition >= frames.length - 1} onClick={() => onSelect(frames[framePosition + 1])}>{copy.nextFrame}</button>
     </div>
-    <div className="macroblock-toolbar"><button className={showMacroblocks ? "active" : ""} onClick={() => setShowMacroblocks(value => !value)}><i />{analysis.blockName}网格 {showMacroblocks ? "ON" : "OFF"}</button><span>{analysis.codecKind === "h264" && h264Subblocks ? `${h264Subblocks.entropyMode ?? "H.264"} · ${h264Subblocks.message}` : analysis.codecKind === "av1" ? (av1SubblocksLoading ? "libaom inspection · 正在熵解码 AV1 块划分…" : av1Subblocks?.message ?? "等待 AV1 inspection") : `${macroblockColumns} × ${macroblockRows} 个 ${blockSize}×${blockSize} 亮度块 · 点击画面选择`}</span></div>
+    <div className="macroblock-toolbar"><button className={showMacroblocks ? "active" : ""} onClick={() => setShowMacroblocks(value => !value)}><i />{blockName} {copy.grid} {showMacroblocks ? "ON" : "OFF"}</button><span>{analysis.codecKind === "h264" && h264Subblocks ? `${h264Subblocks.entropyMode ?? "H.264"} · ${h264StatusMessage}` : analysis.codecKind === "av1" ? (av1SubblocksLoading ? copy.entropyDecodingAv1 : av1StatusMessage) : `${macroblockColumns} × ${macroblockRows} ${blockSize}×${blockSize} ${copy.lumaBlocks} · ${copy.clickToSelect}`}</span></div>
     {showMacroblocks && macroblockCount > 0 && <div className="macroblock-info">
-      <div><span>{analysis.blockName}地址</span><strong>#{macroblockAddress}</strong><small>栅格扫描顺序</small></div>
-      <div><span>位置</span><strong>{av1LeafBlock ? `MI R${av1LeafBlock.y / 4} / C${av1LeafBlock.x / 4}` : `R${macroblockRow} / C${macroblockColumn}`}</strong><small>{av1LeafBlock ? `x ${av1LeafBlock.x}–${av1LeafBlock.x + av1LeafBlock.width - 1} · y ${av1LeafBlock.y}–${av1LeafBlock.y + av1LeafBlock.height - 1}` : `x ${macroblockColumn * blockSize}–${Math.min((macroblockColumn + 1) * blockSize - 1, (analysis.sps?.width ?? 1) - 1)} · y ${macroblockRow * blockSize}–${Math.min((macroblockRow + 1) * blockSize - 1, (analysis.sps?.height ?? 1) - 1)}`}</small></div>
-      <div><span>{analysis.codecKind === "av1" ? "所属 Tile" : "所属切片"}</span><strong>{av1LeafBlock ? `R${av1LeafBlock.tileRow} / C${av1LeafBlock.tileColumn}` : macroblockSlice ? `${macroblockSlice.sliceType}-SLICE` : "—"}</strong><small>{av1LeafBlock ? `${av1Subblocks?.tileColumns} × ${av1Subblocks?.tileRows} tiles` : macroblockSlice ? `MB ${macroblockSlice.firstMb}–${sliceEnd}` : "无切片信息"}</small></div>
-      <div><span>块划分</span><strong>{av1LeafBlock ? `${av1LeafBlock.sizeName} 叶子块` : parsedMacroblock?.typeName ?? `${blockSize}×${blockSize} ${analysis.blockName}`}</strong><small>{av1LeafBlock ? `熵解码块 #${av1LeafBlock.id} · 所属 SB #${av1LeafBlock.superblockAddress}` : parsedMacroblock ? `${parsedMacroblock.partitions.length} 个分区 · ${parsedMacroblock.partitions.map(partition => `${partition.width}×${partition.height}`).join(" / ")}` : analysis.codecKind === "h264" ? (h264Subblocks?.message ?? "未解析到宏块语法") : (av1Subblocks?.message ?? "子块语法尚未熵解码")}</small></div>
-      <div><span>{analysis.unitName} 单元</span><strong>{blockUnit ? `#${blockUnit.index} · ${analysis.codecKind === "av1" ? "O" : "T"}${blockUnit.type}` : "—"}</strong><small>{blockUnit ? `layer ${blockUnit.layerId ?? 0} · 0x${blockUnit.offset.toString(16)}` : "—"}</small></div>
-      <div><span>色度覆盖</span><strong>{analysis.sps?.chromaFormat ?? "—"}</strong><small>{analysis.sps?.chromaFormat === "4:2:0" ? "Cb/Cr 各 8×8" : "由 SPS 色度格式决定"}</small></div>
-      {analysis.codecKind === "h264" && <div><span>宏块语法</span><strong>{parsedMacroblock ? `${parsedMacroblock.prediction}${parsedMacroblock.skipped ? " · SKIP" : ""}` : "—"}</strong><small>{parsedMacroblock ? `mb_type ${parsedMacroblock.rawType ?? "skip"} · CBP ${parsedMacroblock.codedBlockPattern ?? 0}${parsedMacroblock.qpDelta !== undefined ? ` · ΔQP ${parsedMacroblock.qpDelta}` : ""}` : "该地址没有可用的 CAVLC 解析结果"}</small></div>}
-      {analysis.codecKind === "av1" && <div><span>AV1 块语法</span><strong>{av1LeafBlock ? `${av1LeafBlock.mode}${av1LeafBlock.skipped ? " · SKIP" : ""}` : "—"}</strong><small>{av1LeafBlock ? `TX ${av1LeafBlock.transformSize} · base_q_idx ${av1Subblocks?.baseQIndex ?? "—"} · frame_type ${av1Subblocks?.frameType ?? "—"}` : av1SubblocksLoading ? "正在通过 libaom inspection 熵解码" : av1Subblocks?.message ?? "无可用解析结果"}</small></div>}
+      <div><span>{blockName} {copy.address}</span><strong>#{macroblockAddress}</strong><small>{copy.rasterOrder}</small></div>
+      <div><span>{copy.position}</span><strong>{av1LeafBlock ? `MI R${av1LeafBlock.y / 4} / C${av1LeafBlock.x / 4}` : `R${macroblockRow} / C${macroblockColumn}`}</strong><small>{av1LeafBlock ? `x ${av1LeafBlock.x}–${av1LeafBlock.x + av1LeafBlock.width - 1} · y ${av1LeafBlock.y}–${av1LeafBlock.y + av1LeafBlock.height - 1}` : `x ${macroblockColumn * blockSize}–${Math.min((macroblockColumn + 1) * blockSize - 1, (analysis.sps?.width ?? 1) - 1)} · y ${macroblockRow * blockSize}–${Math.min((macroblockRow + 1) * blockSize - 1, (analysis.sps?.height ?? 1) - 1)}`}</small></div>
+      <div><span>{analysis.codecKind === "av1" ? copy.tile : copy.slice}</span><strong>{av1LeafBlock ? `R${av1LeafBlock.tileRow} / C${av1LeafBlock.tileColumn}` : macroblockSlice ? `${macroblockSlice.sliceType}-SLICE` : "—"}</strong><small>{av1LeafBlock ? `${av1Subblocks?.tileColumns} × ${av1Subblocks?.tileRows} tiles` : macroblockSlice ? `MB ${macroblockSlice.firstMb}–${sliceEnd}` : copy.noSlice}</small></div>
+      <div><span>{copy.partition}</span><strong>{av1LeafBlock ? `${av1LeafBlock.sizeName} ${copy.leafBlock}` : parsedMacroblock?.typeName ?? `${blockSize}×${blockSize} ${blockName}`}</strong><small>{av1LeafBlock ? `${copy.decodedBlock} #${av1LeafBlock.id} · ${copy.belongsToSb} #${av1LeafBlock.superblockAddress}` : parsedMacroblock ? `${parsedMacroblock.partitions.length} ${copy.partitions} · ${parsedMacroblock.partitions.map(partition => `${partition.width}×${partition.height}`).join(" / ")}` : analysis.codecKind === "h264" ? (h264StatusMessage || copy.notParsed) : (av1StatusMessage || copy.notParsed)}</small></div>
+      <div><span>{analysis.unitName} {copy.unit}</span><strong>{blockUnit ? `#${blockUnit.index} · ${analysis.codecKind === "av1" ? "O" : "T"}${blockUnit.type}` : "—"}</strong><small>{blockUnit ? `${copy.layer} ${blockUnit.layerId ?? 0} · 0x${blockUnit.offset.toString(16)}` : "—"}</small></div>
+      <div><span>{copy.chromaCoverage}</span><strong>{analysis.sps?.chromaFormat ?? "—"}</strong><small>{analysis.sps?.chromaFormat === "4:2:0" ? copy.chroma420 : copy.chromaFromSps}</small></div>
+      {analysis.codecKind === "h264" && <div><span>{copy.macroblockSyntax}</span><strong>{parsedMacroblock ? `${parsedMacroblock.prediction}${parsedMacroblock.skipped ? " · SKIP" : ""}` : "—"}</strong><small>{parsedMacroblock ? `mb_type ${parsedMacroblock.rawType ?? "skip"} · CBP ${parsedMacroblock.codedBlockPattern ?? 0}${parsedMacroblock.qpDelta !== undefined ? ` · ΔQP ${parsedMacroblock.qpDelta}` : ""}` : copy.noCavlc}</small></div>}
+      {analysis.codecKind === "av1" && <div><span>{copy.av1BlockSyntax}</span><strong>{av1LeafBlock ? `${av1LeafBlock.mode}${av1LeafBlock.skipped ? " · SKIP" : ""}` : "—"}</strong><small>{av1LeafBlock ? `TX ${av1LeafBlock.transformSize} · base_q_idx ${av1Subblocks?.baseQIndex ?? "—"} · frame_type ${av1Subblocks?.frameType ?? "—"}` : av1SubblocksLoading ? copy.decodingWithLibaom : av1StatusMessage || copy.noResult}</small></div>}
     </div>}
   </section>;
 }
 
-export default function Analyzer() {
+export default function Analyzer({ locale }: { locale: Locale }) {
+  const copy = getCopy(locale);
+  const languageHref = locale === "en" ? "/zh-CN" : "/";
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [fileName, setFileName] = useState("");
   const [error, setError] = useState("");
@@ -293,59 +303,60 @@ export default function Analyzer() {
   const openFile = async (file: File) => {
     setError(""); setBusy(true);
     try {
-      validateFile(file);
+      validateFile(file, locale);
       const bytes = new Uint8Array(await file.arrayBuffer());
       const result = analyzeBitstream(bytes, file.name);
       setAnalysis(result); setSourceBytes(bytes); setFileName(file.name); setSelected(result.units.find(unit => unit.keyFrame && unit.frameStart) ?? result.units.find(unit => unit.frameStart) ?? result.units[0] ?? null); setFilter("all"); setQuery("");
-    } catch (err) { setAnalysis(null); setSourceBytes(null); setError(err instanceof Error ? err.message : "无法解析此文件"); }
+    } catch (err) { setAnalysis(null); setSourceBytes(null); setError(err instanceof Error && [copy.invalidFile, copy.emptyFile, copy.fileTooLarge].includes(err.message) ? err.message : copy.parseFailed); }
     finally { setBusy(false); }
   };
 
   const filtered = useMemo(() => analysis?.units.filter(unit => {
     const q = query.trim().toLowerCase();
-    return (filter === "all" || unit.type === Number(filter)) && (!q || unit.typeName.toLowerCase().includes(q) || String(unit.index).includes(q) || unit.sliceType?.toLowerCase().includes(q));
-  }) ?? [], [analysis, filter, query]);
+    return (filter === "all" || unit.type === Number(filter)) && (!q || localizeTypeName(unit.typeName, locale).toLowerCase().includes(q) || String(unit.index).includes(q) || unit.sliceType?.toLowerCase().includes(q));
+  }) ?? [], [analysis, filter, locale, query]);
   const counts = analysis ? [...analysis.counts.entries()].sort((a, b) => b[1] - a[1]) : [];
   const maxCount = counts[0]?.[1] ?? 1;
 
   return <main className={`shell ${analysis ? "analysis-mode" : ""}`}>
     <header className="topbar">
-      <button className="brand-button" onClick={() => setAnalysis(null)} aria-label="返回首页"><span className="brand-mark">B</span><span><strong>BitScope</strong><small>多编码码流分析器</small></span></button>
+      <button className="brand-button" onClick={() => setAnalysis(null)} aria-label={copy.homeAria}><span className="brand-mark">B</span><span><strong>BitScope</strong><small>{copy.brandSubtitle}</small></span></button>
       {analysis && <div className="file-chip"><i />{fileName}<span>{formatBytes(analysis.totalBytes)}</span></div>}
-      <div className="privacy-pill"><i /> 本地解析 · 文件不会上传</div>
+      <div className="privacy-pill"><i /> {copy.privacy}</div>
+      <a className="locale-switch" href={languageHref} hrefLang={locale === "en" ? "zh-CN" : "en"} aria-label={copy.switchLanguageAria}>{copy.switchLanguage}</a>
     </header>
     {!analysis ? <section className="hero">
-      <div className="hero-copy"><p className="eyebrow">AVC · HEVC · VVC · AV1</p><h1>看见码流里的<br /><em>每一个比特。</em></h1><p className="intro">拖入 H.264、H.265、H.266 裸码流或 AV1 OBU，快速检查参数集、编码单元与帧结构。无需安装，数据只在你的浏览器里流动。</p><div className="feature-row"><span>01 多编码识别</span><span>02 NAL / OBU 时间线</span><span>03 HEX 定位</span></div></div>
-      <div><UploadPanel onFile={openFile} />{busy && <p className="status-msg">正在读取码流…</p>}{error && <p className="error-msg" role="alert">{error}</p>}</div>
+      <div className="hero-copy"><p className="eyebrow">AVC · HEVC · VVC · AV1</p><h1>{copy.heroLead}<br /><em>{copy.heroEmphasis}</em></h1><p className="intro">{copy.heroIntro}</p><div className="feature-row"><span>{copy.featureCodecs}</span><span>{copy.featureTimeline}</span><span>{copy.featureHex}</span></div></div>
+      <div><UploadPanel onFile={openFile} locale={locale} />{busy && <p className="status-msg">{copy.reading}</p>}{error && <p className="error-msg" role="alert">{error}</p>}</div>
     </section> : <div className="workspace">
-      <section className="summary-head"><div><p className="eyebrow">{analysis.codecName}{analysis.containerName ? ` · ${analysis.containerName}` : ""} / 解析完成</p><h2>{analysis.sps ? `${analysis.sps.width} × ${analysis.sps.height}` : analysis.codecName}</h2></div><UploadPanel onFile={openFile} compact /></section>
+      <section className="summary-head"><div><p className="eyebrow">{analysis.codecName}{analysis.containerName ? ` · ${analysis.containerName}` : ""} / {copy.parsed}</p><h2>{analysis.sps ? `${analysis.sps.width} × ${analysis.sps.height}` : analysis.codecName}</h2></div><UploadPanel onFile={openFile} locale={locale} compact /></section>
       <section className="stats-grid">
-        <Stat label="编码档次" value={analysis.sps?.profile ?? "未知"} note={analysis.sps ? `Level ${analysis.sps.level}` : `未解析到 ${analysis.parameterSetName}`} />
-        <Stat label="图像尺寸" value={analysis.sps ? `${analysis.sps.width} × ${analysis.sps.height}` : "—"} note={analysis.sps?.frameMbsOnly ? "逐行编码" : analysis.sps ? "场编码" : undefined} />
-        <Stat label="帧率" value={analysis.sps?.fps ? `${analysis.sps.fps.toFixed(3)} fps` : "—"} note={analysis.sps?.fps ? (analysis.containerName === "IVF" ? "来自 IVF timebase" : analysis.codecKind === "av1" ? "来自 Sequence Header timing_info" : "来自 VUI timing_info") : "码流未声明"} />
-        <Stat label="帧 / 关键帧" value={`${analysis.frameCount} / ${analysis.idrCount}`} note={analysis.duration ? `约 ${analysis.duration.toFixed(2)} 秒${analysis.declaredFrameCount !== undefined ? ` · IVF 声明 ${analysis.declaredFrameCount} 帧` : ""}` : `${analysis.units.length} 个 ${analysis.unitName}`} />
+        <Stat label={copy.profile} value={analysis.sps?.profile ?? copy.unknown} note={analysis.sps ? `Level ${analysis.sps.level}` : `${copy.missing} ${localizeParameterSetName(analysis.parameterSetName, locale)}`} />
+        <Stat label={copy.dimensions} value={analysis.sps ? `${analysis.sps.width} × ${analysis.sps.height}` : "—"} note={analysis.sps?.frameMbsOnly ? copy.progressive : analysis.sps ? copy.interlaced : undefined} />
+        <Stat label={copy.frameRate} value={analysis.sps?.fps ? `${analysis.sps.fps.toFixed(3)} fps` : "—"} note={analysis.sps?.fps ? (analysis.containerName === "IVF" ? copy.fromIvf : analysis.codecKind === "av1" ? copy.fromSequence : copy.fromVui) : copy.frameRateUndeclared} />
+        <Stat label={copy.framesKeyframes} value={`${analysis.frameCount} / ${analysis.idrCount}`} note={analysis.duration ? `${copy.about} ${analysis.duration.toFixed(2)} ${copy.seconds}${analysis.declaredFrameCount !== undefined ? ` · ${copy.ivfDeclares} ${analysis.declaredFrameCount} ${copy.frames}` : ""}` : `${analysis.units.length} ${analysis.unitName} ${copy.units}`} />
       </section>
-      {sourceBytes && <DecodedPreview bytes={sourceBytes} analysis={analysis} selected={selected} onSelect={setSelected} />}
+      {sourceBytes && <DecodedPreview bytes={sourceBytes} analysis={analysis} selected={selected} onSelect={setSelected} locale={locale} />}
       <section className="timeline-card">
-        <div className="section-title"><div><span>02</span><h3>{analysis.unitName} 时间线</h3></div><small>选择帧单元时，解码画面同步定位</small></div>
-        <div className="timeline" aria-label={`${analysis.unitName} 单元时间线`}>{analysis.units.slice(0, 500).map(unit => <button key={unit.index} title={`#${unit.index} ${unit.typeName}`} aria-label={`${analysis.unitName} ${unit.index} ${unit.typeName}`} className={selected?.index === unit.index ? "active" : ""} style={{ background: unitColor(unit.type, analysis.codecKind) }} onClick={() => setSelected(unit)} />)}</div>
-        {analysis.units.length > 500 && <p className="limit-note">时间线显示前 500 个单元；完整数据可在下方列表检索。</p>}
-        <div className="legend"><span><i style={{background:"#ff6b35"}}/>关键帧</span><span><i style={{background:"#3b82f6"}}/>帧 / Slice</span><span><i style={{background:"#d9ff43"}}/>序列参数</span><span><i style={{background:"#b794f4"}}/>图像 / Tile 参数</span><span><i style={{background:"#f6c445"}}/>元数据</span></div>
+        <div className="section-title"><div><span>02</span><h3>{analysis.unitName} {copy.timeline}</h3></div><small>{copy.timelineSync}</small></div>
+        <div className="timeline" aria-label={`${analysis.unitName} ${copy.timelineAria}`}>{analysis.units.slice(0, 500).map(unit => { const typeName = localizeTypeName(unit.typeName, locale); return <button key={unit.index} title={`#${unit.index} ${typeName}`} aria-label={`${analysis.unitName} ${unit.index} ${typeName}`} className={selected?.index === unit.index ? "active" : ""} style={{ background: unitColor(unit.type, analysis.codecKind) }} onClick={() => setSelected(unit)} />; })}</div>
+        {analysis.units.length > 500 && <p className="limit-note">{copy.timelineLimit}</p>}
+        <div className="legend"><span><i style={{background:"#ff6b35"}}/>{copy.keyFrame}</span><span><i style={{background:"#3b82f6"}}/>{copy.frameSlice}</span><span><i style={{background:"#d9ff43"}}/>{copy.sequenceParameters}</span><span><i style={{background:"#b794f4"}}/>{copy.pictureTileParameters}</span><span><i style={{background:"#f6c445"}}/>{copy.metadata}</span></div>
       </section>
       <div className="content-grid">
         <section className="nal-card">
-          <div className="section-title"><div><span>03</span><h3>{analysis.unitName} 单元</h3></div><small>{filtered.length} / {analysis.units.length}</small></div>
-          <div className="filters"><select value={filter} onChange={e => setFilter(e.target.value)} aria-label={`按 ${analysis.unitName} 类型筛选`}><option value="all">全部类型</option>{counts.map(([type]) => <option key={type} value={type}>{analysis.codecKind === "av1" ? "O" : "T"}{type} · {analysis.units.find(u => u.type === type)?.typeName}</option>)}</select><input value={query} onChange={e => setQuery(e.target.value)} placeholder="搜索序号、类型、帧…" aria-label={`搜索 ${analysis.unitName} 单元`} /></div>
-          <div className="nal-table" role="table"><div className="nal-row table-head" role="row"><span>#</span><span>类型</span><span>帧 / 切片</span><span>大小</span><span>偏移</span></div>{filtered.slice(0, 300).map(unit => <button className={`nal-row ${selected?.index === unit.index ? "selected" : ""}`} key={unit.index} onClick={() => setSelected(unit)} role="row"><span>{String(unit.index).padStart(4, "0")}</span><span><NalBadge unit={unit} codec={analysis.codecKind} /> {unit.typeName}</span><span>{unit.sliceType ?? "—"}</span><span>{formatBytes(unit.size)}</span><span>0x{unit.offset.toString(16).padStart(8,"0")}</span></button>)}</div>
-          {filtered.length > 300 && <p className="limit-note">为保持流畅，仅展示前 300 条匹配结果。</p>}
+          <div className="section-title"><div><span>03</span><h3>{analysis.unitName} {copy.unitList}</h3></div><small>{filtered.length} / {analysis.units.length}</small></div>
+          <div className="filters"><select value={filter} onChange={e => setFilter(e.target.value)} aria-label={`${copy.typeFilter} ${analysis.unitName}`}><option value="all">{copy.allTypes}</option>{counts.map(([type]) => <option key={type} value={type}>{analysis.codecKind === "av1" ? "O" : "T"}{type} · {localizeTypeName(analysis.units.find(u => u.type === type)?.typeName ?? "", locale)}</option>)}</select><input value={query} onChange={e => setQuery(e.target.value)} placeholder={copy.searchPlaceholder} aria-label={`${copy.searchAria} ${analysis.unitName}`} /></div>
+          <div className="nal-table" role="table"><div className="nal-row table-head" role="row"><span>#</span><span>{copy.type}</span><span>{copy.frameSlice}</span><span>{copy.size}</span><span>{copy.offset}</span></div>{filtered.slice(0, 300).map(unit => <button className={`nal-row ${selected?.index === unit.index ? "selected" : ""}`} key={unit.index} onClick={() => setSelected(unit)} role="row"><span>{String(unit.index).padStart(4, "0")}</span><span><NalBadge unit={unit} codec={analysis.codecKind} /> {localizeTypeName(unit.typeName, locale)}</span><span>{unit.sliceType ?? "—"}</span><span>{formatBytes(unit.size)}</span><span>0x{unit.offset.toString(16).padStart(8,"0")}</span></button>)}</div>
+          {filtered.length > 300 && <p className="limit-note">{copy.listLimit}</p>}
         </section>
         <aside>
-          <section className="detail-card"><div className="section-title"><div><span>04</span><h3>单元详情</h3></div></div>{selected ? <><div className="detail-title"><NalBadge unit={selected} codec={analysis.codecKind}/><div><b>{selected.typeName}</b><small>{analysis.unitName} #{selected.index}</small></div></div><dl><div><dt>{analysis.codecKind === "av1" ? "obu_type" : "nal_unit_type"}</dt><dd>{selected.type}</dd></div>{analysis.codecKind === "h264" ? <div><dt>nal_ref_idc</dt><dd>{selected.refIdc}</dd></div> : <><div><dt>layer_id</dt><dd>{selected.layerId ?? 0}</dd></div><div><dt>temporal_id</dt><dd>{selected.temporalId ?? 0}</dd></div></>}<div><dt>{analysis.unitName === "NAL" ? "start_code" : "header_size"}</dt><dd>{analysis.unitName === "NAL" ? selected.startCodeSize : selected.headerSize ?? 1} bytes</dd></div><div><dt>payload_size</dt><dd>{formatBytes(Math.max(0, selected.size - selected.startCodeSize - (selected.headerSize ?? 1)))}</dd></div>{selected.sliceType && <div><dt>frame_or_slice_type</dt><dd>{selected.sliceType}</dd></div>}{selected.firstMb !== undefined && <div><dt>first_block_in_slice</dt><dd>{selected.firstMb}</dd></div>}</dl><p className="hex-label">HEX PREVIEW · 前 48 字节</p><pre>{selected.hex}</pre></> : <p>选择一个 {analysis.unitName} 单元查看详情。</p>}</section>
-          <section className="distribution-card"><div className="section-title"><div><span>05</span><h3>类型分布</h3></div></div>{counts.slice(0, 7).map(([type, count]) => <div className="bar-row" key={type}><span>{analysis.codecKind === "av1" ? "O" : "T"}{type}</span><div><i style={{width:`${Math.max(4, count / maxCount * 100)}%`,background:unitColor(type, analysis.codecKind)}}/></div><b>{count}</b></div>)}</section>
-          {analysis.sps && <section className="stream-card"><div className="section-title"><div><span>06</span><h3>{analysis.parameterSetName}</h3></div></div><dl><div><dt>profile_idc</dt><dd>{analysis.sps.profileIdc}</dd></div><div><dt>level</dt><dd>{analysis.sps.level}</dd></div><div><dt>chroma_format</dt><dd>{analysis.sps.chromaFormat}</dd></div><div><dt>bit_depth</dt><dd>{analysis.sps.bitDepth} bit</dd></div><div><dt>coding_block</dt><dd>{analysis.blockSize} × {analysis.blockSize}</dd></div></dl></section>}
+          <section className="detail-card"><div className="section-title"><div><span>04</span><h3>{copy.unitDetails}</h3></div></div>{selected ? <><div className="detail-title"><NalBadge unit={selected} codec={analysis.codecKind}/><div><b>{localizeTypeName(selected.typeName, locale)}</b><small>{analysis.unitName} #{selected.index}</small></div></div><dl><div><dt>{analysis.codecKind === "av1" ? "obu_type" : "nal_unit_type"}</dt><dd>{selected.type}</dd></div>{analysis.codecKind === "h264" ? <div><dt>nal_ref_idc</dt><dd>{selected.refIdc}</dd></div> : <><div><dt>layer_id</dt><dd>{selected.layerId ?? 0}</dd></div><div><dt>temporal_id</dt><dd>{selected.temporalId ?? 0}</dd></div></>}<div><dt>{analysis.unitName === "NAL" ? "start_code" : "header_size"}</dt><dd>{analysis.unitName === "NAL" ? selected.startCodeSize : selected.headerSize ?? 1} bytes</dd></div><div><dt>payload_size</dt><dd>{formatBytes(Math.max(0, selected.size - selected.startCodeSize - (selected.headerSize ?? 1)))}</dd></div>{selected.sliceType && <div><dt>frame_or_slice_type</dt><dd>{selected.sliceType}</dd></div>}{selected.firstMb !== undefined && <div><dt>first_block_in_slice</dt><dd>{selected.firstMb}</dd></div>}</dl><p className="hex-label">{copy.hexPreview}</p><pre>{selected.hex}</pre></> : <p>{copy.selectUnit}</p>}</section>
+          <section className="distribution-card"><div className="section-title"><div><span>05</span><h3>{copy.typeDistribution}</h3></div></div>{counts.slice(0, 7).map(([type, count]) => <div className="bar-row" key={type}><span>{analysis.codecKind === "av1" ? "O" : "T"}{type}</span><div><i style={{width:`${Math.max(4, count / maxCount * 100)}%`,background:unitColor(type, analysis.codecKind)}}/></div><b>{count}</b></div>)}</section>
+          {analysis.sps && <section className="stream-card"><div className="section-title"><div><span>06</span><h3>{localizeParameterSetName(analysis.parameterSetName, locale)}</h3></div></div><dl><div><dt>profile_idc</dt><dd>{analysis.sps.profileIdc}</dd></div><div><dt>level</dt><dd>{analysis.sps.level}</dd></div><div><dt>chroma_format</dt><dd>{analysis.sps.chromaFormat}</dd></div><div><dt>bit_depth</dt><dd>{analysis.sps.bitDepth} bit</dd></div><div><dt>coding_block</dt><dd>{analysis.blockSize} × {analysis.blockSize}</dd></div></dl></section>}
         </aside>
       </div>
     </div>}
-    <footer>BITSTREAM, MADE LEGIBLE <span>{analysis ? "ANALYZED LOCALLY" : "01"}</span></footer>
+    <footer>BITSTREAM, MADE LEGIBLE <span>{analysis ? copy.analyzedLocally : "01"}</span></footer>
   </main>;
 }

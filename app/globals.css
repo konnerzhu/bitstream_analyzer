@@ -10,6 +10,8 @@ body { font-family:Arial,"PingFang SC",sans-serif; }
 .topbar span { display:block; font:10px monospace; letter-spacing:.12em; opacity:.58; margin-top:2px; }
 .privacy-pill { margin-left:auto!important; border:1px solid #beb8aa; border-radius:20px; padding:8px 12px; font:11px monospace!important; }
 .privacy-pill i { display:inline-block; width:7px; height:7px; border-radius:50%; background:#32a85a; margin-right:6px; }
+.locale-switch { border:1px solid var(--ink); color:var(--ink); padding:8px 12px; font:700 11px monospace; text-decoration:none; white-space:nowrap; }
+.locale-switch:hover,.locale-switch:focus-visible { background:var(--ink); color:var(--acid); }
 .hero { flex:1; display:grid; grid-template-columns:1.05fr .95fr; gap:7vw; align-items:center; max-width:1280px; width:100%; margin:auto; padding:7vh 0; }
 .eyebrow { font:700 11px monospace; letter-spacing:.18em; border-left:24px solid var(--orange); padding-left:9px; }
 h1 { font-size:clamp(54px,7.3vw,112px); line-height:.86; letter-spacing:-.075em; margin:26px 0; font-weight:800; }
@@ -23,4 +25,4 @@ h1 em { font-family:Georgia,"Songti SC",serif; font-weight:400; color:var(--oran
 .dropzone small { margin-top:10px; font:12px monospace; opacity:.6; }
 footer { border-top:2px solid var(--ink); padding-top:16px; font:bold 10px monospace; letter-spacing:.18em; }
 footer span { float:right; }
-@media(max-width:800px){.shell{padding:18px}.hero{grid-template-columns:1fr;padding:45px 0}.dropzone{min-height:240px;box-shadow:8px 8px 0 var(--ink)}.privacy-pill{display:none}h1{font-size:58px}}
+@media(max-width:800px){.shell{padding:18px}.hero{grid-template-columns:1fr;padding:45px 0}.dropzone{min-height:240px;box-shadow:8px 8px 0 var(--ink)}.privacy-pill{display:none}.locale-switch{margin-left:auto}h1{font-size:58px}}
