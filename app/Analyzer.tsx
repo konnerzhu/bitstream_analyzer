@@ -4,11 +4,11 @@ import { ChangeEvent, DragEvent, useEffect, useMemo, useRef, useState } from "re
 import { Analysis, CodecKind, NalUnit, SUPPORTED_EXTENSIONS, analyzeBitstream, formatBytes, unitColor } from "./codecs";
 
 const MAX_FILE_SIZE = 200 * 1024 * 1024;
-const ACCEPTED_FILES = ".h264,.264,.avc,.h265,.265,.hevc,.h266,.266,.vvc,.av1,.obu,video/h264,video/h265,video/av1";
+const ACCEPTED_FILES = ".h264,.264,.avc,.h265,.265,.hevc,.h266,.266,.vvc,.av1,.obu,.ivf,video/h264,video/h265,video/av1";
 
 function validateFile(file: File) {
   const lower = file.name.toLowerCase();
-  if (!SUPPORTED_EXTENSIONS.some(ext => lower.endsWith(ext))) throw new Error("请选择 H.264/H.265/H.266 Annex-B 裸码流，或 AV1 OBU 文件");
+  if (!SUPPORTED_EXTENSIONS.some(ext => lower.endsWith(ext))) throw new Error("请选择 H.264/H.265/H.266 Annex-B 裸码流、AV1 OBU 或 IVF 文件");
   if (file.size === 0) throw new Error("文件是空的");
   if (file.size > MAX_FILE_SIZE) throw new Error("文件超过 200 MB 上限");
 }
@@ -19,7 +19,7 @@ function UploadPanel({ onFile, compact = false }: { onFile: (file: File) => void
   const accept = (files: FileList | null) => { if (files?.[0]) onFile(files[0]); };
   return <div className={`dropzone ${dragging ? "dragging" : ""} ${compact ? "compact" : ""}`} role="button" tabIndex={0} aria-label="选择视频码流文件" onClick={() => input.current?.click()} onKeyDown={e => { if (e.key === "Enter" || e.key === " ") input.current?.click(); }} onDragOver={(e: DragEvent) => { e.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)} onDrop={(e: DragEvent) => { e.preventDefault(); setDragging(false); accept(e.dataTransfer.files); }}>
     <input ref={input} type="file" accept={ACCEPTED_FILES} onChange={(e: ChangeEvent<HTMLInputElement>) => accept(e.target.files)} />
-    <span className="drop-icon">↓</span><b>{compact ? "打开另一个文件" : "拖放视频码流到这里"}</b>{!compact && <small>H.264 · H.265 · H.266 · AV1 · 最大 200 MB</small>}
+    <span className="drop-icon">↓</span><b>{compact ? "打开另一个文件" : "拖放视频码流到这里"}</b>{!compact && <small>H.264 · H.265 · H.266 · AV1/IVF · 最大 200 MB</small>}
   </div>;
 }
 
@@ -112,7 +112,7 @@ function DecodedPreview({ bytes, analysis, selected, onSelect }: { bytes: Uint8A
       const config: VideoDecoderConfig = { codec: analysis.sps!.codec, codedWidth: analysis.sps!.width, codedHeight: analysis.sps!.height, optimizeForLatency: true };
       const support = await VideoDecoder.isConfigSupported(config);
       if (!support.supported) throw new Error(`浏览器不支持 ${analysis.sps!.codec} 解码`);
-      const targetTimestamp = Math.round(framePosition * 1_000_000 / (analysis.sps!.fps ?? 30));
+      const targetTimestamp = target.timestamp ?? Math.round(framePosition * 1_000_000 / (analysis.sps!.fps ?? 30));
       let rendered = false;
       decoder = new VideoDecoder({
         output: frame => {
@@ -135,8 +135,11 @@ function DecodedPreview({ bytes, analysis, selected, onSelect }: { bytes: Uint8A
       for (let i = decodeStart; i <= decodeEnd; i++) {
         if (cancelled || decoder.state === "closed") break;
         const end = i + 1 < frames.length ? frames[i + 1].offset : bytes.length;
-        let chunkData: Uint8Array = bytes.subarray(frames[i].offset, end);
-        if (i === decodeStart) {
+        const sampleOffset = frames[i].sampleOffset;
+        let chunkData: Uint8Array = sampleOffset !== undefined && frames[i].sampleSize !== undefined
+          ? bytes.subarray(sampleOffset, sampleOffset + frames[i].sampleSize)
+          : bytes.subarray(frames[i].offset, end);
+        if (i === decodeStart && sampleOffset === undefined) {
           const preceding = analysis.units.filter(unit => unit.index < frames[i].index);
           const parameterSets = analysis.parameterSetTypes.map(type => preceding.findLast(unit => unit.type === type)).filter((unit): unit is NalUnit => Boolean(unit)).sort((a, b) => a.index - b.index);
           if (parameterSets.length) {
@@ -152,7 +155,7 @@ function DecodedPreview({ bytes, analysis, selected, onSelect }: { bytes: Uint8A
         }
         decoder.decode(new EncodedVideoChunk({
           type: frames[i].keyFrame ? "key" : "delta",
-          timestamp: Math.round(i * 1_000_000 / (analysis.sps!.fps ?? 30)),
+          timestamp: frames[i].timestamp ?? Math.round(i * 1_000_000 / (analysis.sps!.fps ?? 30)),
           data: chunkData,
         }));
       }
@@ -240,12 +243,12 @@ export default function Analyzer() {
       <div className="hero-copy"><p className="eyebrow">AVC · HEVC · VVC · AV1</p><h1>看见码流里的<br /><em>每一个比特。</em></h1><p className="intro">拖入 H.264、H.265、H.266 裸码流或 AV1 OBU，快速检查参数集、编码单元与帧结构。无需安装，数据只在你的浏览器里流动。</p><div className="feature-row"><span>01 多编码识别</span><span>02 NAL / OBU 时间线</span><span>03 HEX 定位</span></div></div>
       <div><UploadPanel onFile={openFile} />{busy && <p className="status-msg">正在读取码流…</p>}{error && <p className="error-msg" role="alert">{error}</p>}</div>
     </section> : <div className="workspace">
-      <section className="summary-head"><div><p className="eyebrow">{analysis.codecName} / 解析完成</p><h2>{analysis.sps ? `${analysis.sps.width} × ${analysis.sps.height}` : analysis.codecName}</h2></div><UploadPanel onFile={openFile} compact /></section>
+      <section className="summary-head"><div><p className="eyebrow">{analysis.codecName}{analysis.containerName ? ` · ${analysis.containerName}` : ""} / 解析完成</p><h2>{analysis.sps ? `${analysis.sps.width} × ${analysis.sps.height}` : analysis.codecName}</h2></div><UploadPanel onFile={openFile} compact /></section>
       <section className="stats-grid">
         <Stat label="编码档次" value={analysis.sps?.profile ?? "未知"} note={analysis.sps ? `Level ${analysis.sps.level}` : `未解析到 ${analysis.parameterSetName}`} />
         <Stat label="图像尺寸" value={analysis.sps ? `${analysis.sps.width} × ${analysis.sps.height}` : "—"} note={analysis.sps?.frameMbsOnly ? "逐行编码" : analysis.sps ? "场编码" : undefined} />
-        <Stat label="帧率" value={analysis.sps?.fps ? `${analysis.sps.fps.toFixed(3)} fps` : "—"} note={analysis.sps?.fps ? (analysis.codecKind === "av1" ? "来自 Sequence Header timing_info" : "来自 VUI timing_info") : "码流未声明"} />
-        <Stat label="帧 / 关键帧" value={`${analysis.frameCount} / ${analysis.idrCount}`} note={analysis.duration ? `约 ${analysis.duration.toFixed(2)} 秒` : `${analysis.units.length} 个 ${analysis.unitName}`} />
+        <Stat label="帧率" value={analysis.sps?.fps ? `${analysis.sps.fps.toFixed(3)} fps` : "—"} note={analysis.sps?.fps ? (analysis.containerName === "IVF" ? "来自 IVF timebase" : analysis.codecKind === "av1" ? "来自 Sequence Header timing_info" : "来自 VUI timing_info") : "码流未声明"} />
+        <Stat label="帧 / 关键帧" value={`${analysis.frameCount} / ${analysis.idrCount}`} note={analysis.duration ? `约 ${analysis.duration.toFixed(2)} 秒${analysis.declaredFrameCount !== undefined ? ` · IVF 声明 ${analysis.declaredFrameCount} 帧` : ""}` : `${analysis.units.length} 个 ${analysis.unitName}`} />
       </section>
       {sourceBytes && <DecodedPreview bytes={sourceBytes} analysis={analysis} selected={selected} onSelect={setSelected} />}
       <section className="timeline-card">

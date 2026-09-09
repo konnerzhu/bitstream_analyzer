@@ -45,6 +45,7 @@ BitScope 是一款可视化 H.264/AVC、H.265/HEVC、H.266/VVC 和 AV1 裸码流
 | H.265 Annex-B 裸码流（`.h265`、`.265`、`.hevc`） | ✅ | VPS/SPS/PPS、VCL 单元、层级和 CTU 大小 |
 | H.266 Annex-B 裸码流（`.h266`、`.266`、`.vvc`） | ✅ | 支持结构分析；浏览器暂不能解码 |
 | 低开销 AV1 OBU（`.av1`、`.obu`） | ✅ | 带长度 OBU、Sequence Header、帧、Tile 和元数据 |
+| AV1 IVF（`.ivf`） | ✅ | DKIF 文件头、尺寸、时间基、帧记录及内部 OBU |
 | MP4 / MOV | — | 需要先提取对应的裸码流 |
 | MKV / WebM | — | 暂未实现容器解复用 |
 | MPEG-TS | — | 暂未实现容器解复用 |
@@ -85,7 +86,7 @@ npm run dev
 
 ## 使用方法
 
-1. 导入 AVC/HEVC/VVC Annex-B 码流或 AV1 OBU 码流。
+1. 导入 AVC/HEVC/VVC Annex-B 码流、AV1 OBU 码流或 AV1 IVF 文件。
 2. 在时间线或列表中选择帧、NAL 或 OBU 单元。
 3. 查看同步的解码画面与语法面板。
 4. 开启编码块覆盖层，点击块即可查看地址、坐标、边界及可用的 Slice 归属。
@@ -115,7 +116,7 @@ npm run lint     # 执行静态检查
 
 ## 已知限制
 
-- 当前仅支持 Annex-B NAL 裸码流和低开销 AV1 OBU，不包含容器解复用。
+- 当前支持 Annex-B NAL 裸码流、低开销 AV1 OBU 和 AV1 IVF；尚不包含通用容器解复用。
 - 解码结果取决于浏览器、操作系统以及可用的 AVC/HEVC/AV1 编解码实现；VVC 仅支持分析。
 - 尚未完整熵解码编码块语法，因此暂不显示划分树、运动矢量、参考帧和残差数据。
 - 隔行码流和部分少见的参数集组合，可能包含已解析但尚未可视化的字段。

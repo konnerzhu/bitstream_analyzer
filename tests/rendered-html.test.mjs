@@ -36,7 +36,7 @@ test("declares each supported elementary-stream format", async () => {
   for (const codec of ["h264", "h265", "h266", "av1"]) {
     assert.match(codecs, new RegExp(`\\"${codec}\\"`));
   }
-  for (const extension of [".h264", ".h265", ".h266", ".obu"]) {
+  for (const extension of [".h264", ".h265", ".h266", ".obu", ".ivf"]) {
     assert.match(codecs, new RegExp(extension.replace(".", "\\.")));
   }
   assert.match(analyzer, /analyzeBitstream\(bytes, file\.name\)/);

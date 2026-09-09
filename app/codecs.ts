@@ -19,7 +19,7 @@ export const SUPPORTED_EXTENSIONS = [
   ".h264", ".264", ".avc",
   ".h265", ".265", ".hevc",
   ".h266", ".266", ".vvc",
-  ".av1", ".obu",
+  ".av1", ".obu", ".ivf",
 ];
 
 const HEVC_NAMES = new Map<number, string>([
@@ -376,69 +376,142 @@ function parseAv1FrameType(payload: Uint8Array, reducedStillPictureHeader: boole
   }
 }
 
-function analyzeAv1(bytes: Uint8Array): Analysis {
+type Av1Segment = {
+  data: Uint8Array;
+  baseOffset: number;
+  sampleOffset?: number;
+  sampleSize?: number;
+  timestamp?: number;
+};
+
+type Av1ContainerInfo = {
+  name: string;
+  width: number;
+  height: number;
+  fps?: number;
+  declaredFrameCount?: number;
+};
+
+function analyzeAv1Segments(bytes: Uint8Array, segments: Av1Segment[], container?: Av1ContainerInfo): Analysis {
   const units: NalUnit[] = [];
   const counts = new Map<number, number>();
-  let offset = 0;
   let sequence: Av1Sequence | undefined;
-  while (offset < bytes.length) {
-    const start = offset;
-    const header = bytes[offset++];
-    if (header & 0x80) throw new Error(`OBU #${units.length} 的 obu_forbidden_bit 非零`);
-    const type = (header >> 3) & 0xf;
-    const extensionFlag = (header >> 2) & 1;
-    const hasSizeField = (header >> 1) & 1;
-    if (header & 1) throw new Error(`OBU #${units.length} 的 obu_reserved_1bit 非零`);
-    let temporalId = 0;
-    let spatialId = 0;
-    if (extensionFlag) {
-      if (offset >= bytes.length) throw new Error("AV1 OBU 扩展头不完整");
-      const extension = bytes[offset++];
-      temporalId = extension >> 5;
-      spatialId = (extension >> 3) & 3;
-      if (extension & 7) throw new Error(`OBU #${units.length} 的扩展保留位非零`);
+  for (const segment of segments) {
+    let offset = 0;
+    while (offset < segment.data.length) {
+      const start = offset;
+      const header = segment.data[offset++];
+      if (header & 0x80) throw new Error(`OBU #${units.length} 的 obu_forbidden_bit 非零`);
+      const type = (header >> 3) & 0xf;
+      const extensionFlag = (header >> 2) & 1;
+      const hasSizeField = (header >> 1) & 1;
+      if (header & 1) throw new Error(`OBU #${units.length} 的 obu_reserved_1bit 非零`);
+      let temporalId = 0;
+      let spatialId = 0;
+      if (extensionFlag) {
+        if (offset >= segment.data.length) throw new Error("AV1 OBU 扩展头不完整");
+        const extension = segment.data[offset++];
+        temporalId = extension >> 5;
+        spatialId = (extension >> 3) & 3;
+        if (extension & 7) throw new Error(`OBU #${units.length} 的扩展保留位非零`);
+      }
+      let payloadSize = segment.data.length - offset;
+      let sizeFieldLength = 0;
+      if (hasSizeField) {
+        const leb = readLeb128(segment.data, offset);
+        payloadSize = leb.value;
+        sizeFieldLength = leb.length;
+        offset += leb.length;
+      }
+      if (payloadSize < 0 || offset + payloadSize > segment.data.length) throw new Error(`OBU #${units.length} 的大小超过帧边界`);
+      const payload = segment.data.subarray(offset, offset + payloadSize);
+      if (type === 1 && !sequence) {
+        try { sequence = parseAv1SequenceHeader(payload); } catch { /* damaged header remains inspectable */ }
+      }
+      const isFrame = type === 3 || type === 6;
+      const frame = isFrame ? parseAv1FrameType(payload, sequence?.reducedStillPictureHeader ?? false) : undefined;
+      const size = offset + payloadSize - start;
+      const absoluteStart = segment.baseOffset + start;
+      counts.set(type, (counts.get(type) ?? 0) + 1);
+      units.push({
+        index: units.length, offset: absoluteStart, size, startCodeSize: 0,
+        headerSize: 1 + extensionFlag + sizeFieldLength,
+        type, typeName: AV1_NAMES.get(type) ?? `Reserved OBU ${type}`,
+        refIdc: spatialId, sliceType: frame?.frameType,
+        keyFrame: frame?.keyFrame, frameStart: isFrame,
+        temporalId, layerId: spatialId,
+        sampleOffset: isFrame ? segment.sampleOffset : undefined,
+        sampleSize: isFrame ? segment.sampleSize : undefined,
+        timestamp: isFrame ? segment.timestamp : undefined,
+        fields: { obu_extension_flag: Boolean(extensionFlag), temporal_id: temporalId, spatial_id: spatialId },
+        hex: hexPreview(bytes.subarray(absoluteStart, absoluteStart + size)),
+      });
+      offset += payloadSize;
+      if (!hasSizeField) break;
+      if (units.length > 100_000) throw new Error("OBU 超过 100,000 个，为避免浏览器失去响应已停止解析");
     }
-    let payloadSize = bytes.length - offset;
-    let sizeFieldLength = 0;
-    if (hasSizeField) {
-      const leb = readLeb128(bytes, offset);
-      payloadSize = leb.value;
-      sizeFieldLength = leb.length;
-      offset += leb.length;
-    }
-    if (payloadSize < 0 || offset + payloadSize > bytes.length) throw new Error(`OBU #${units.length} 的大小超过文件边界`);
-    const payload = bytes.subarray(offset, offset + payloadSize);
-    if (type === 1 && !sequence) {
-      try { sequence = parseAv1SequenceHeader(payload); } catch { /* damaged header remains inspectable */ }
-    }
-    const isFrame = type === 3 || type === 6;
-    const frame = isFrame ? parseAv1FrameType(payload, sequence?.reducedStillPictureHeader ?? false) : undefined;
-    const size = offset + payloadSize - start;
-    counts.set(type, (counts.get(type) ?? 0) + 1);
-    units.push({
-      index: units.length, offset: start, size, startCodeSize: 0,
-      headerSize: 1 + extensionFlag + sizeFieldLength,
-      type, typeName: AV1_NAMES.get(type) ?? `Reserved OBU ${type}`,
-      refIdc: spatialId, sliceType: frame?.frameType,
-      keyFrame: frame?.keyFrame, frameStart: isFrame,
-      temporalId, layerId: spatialId,
-      fields: { obu_extension_flag: Boolean(extensionFlag), temporal_id: temporalId, spatial_id: spatialId },
-      hex: hexPreview(bytes.subarray(start, start + size)),
-    });
-    offset += payloadSize;
-    if (!hasSizeField) break;
-    if (units.length > 100_000) throw new Error("OBU 超过 100,000 个，为避免浏览器失去响应已停止解析");
   }
   if (!units.length) throw new Error("文件中没有可识别的 AV1 OBU");
   const frameCount = units.filter(unit => unit.frameStart).length;
   const idrCount = units.filter(unit => unit.frameStart && unit.keyFrame).length;
+  if (sequence && container) {
+    sequence.info.width = container.width || sequence.info.width;
+    sequence.info.height = container.height || sequence.info.height;
+    sequence.info.fps = container.fps ?? sequence.info.fps;
+  }
   return {
     units, sps: sequence?.info,
     duration: sequence?.info.fps ? frameCount / sequence.info.fps : undefined,
     frameCount, idrCount, totalBytes: bytes.length, counts,
     codecKind: "av1", codecName: "AV1", unitName: "OBU", blockName: "Superblock",
     blockSize: sequence?.info.blockSize ?? 64, parameterSetTypes: [1], parameterSetName: "Sequence Header",
+    containerName: container?.name, declaredFrameCount: container?.declaredFrameCount,
   };
+}
+
+function analyzeAv1(bytes: Uint8Array): Analysis {
+  return analyzeAv1Segments(bytes, [{ data: bytes, baseOffset: 0 }]);
+}
+
+function readAscii(bytes: Uint8Array, offset: number, length: number) {
+  return String.fromCharCode(...bytes.subarray(offset, offset + length));
+}
+
+function analyzeIvf(bytes: Uint8Array): Analysis {
+  if (bytes.length < 32 || readAscii(bytes, 0, 4) !== "DKIF") throw new Error("无效的 IVF 文件头（缺少 DKIF 签名）");
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const version = view.getUint16(4, true);
+  const headerSize = view.getUint16(6, true);
+  const fourcc = readAscii(bytes, 8, 4);
+  if (version !== 0) throw new Error(`暂不支持 IVF version ${version}`);
+  if (headerSize < 32 || headerSize > bytes.length) throw new Error("IVF 文件头长度无效");
+  if (fourcc !== "AV01") throw new Error(`IVF 中的编码格式 ${fourcc} 不是 AV1`);
+  const width = view.getUint16(12, true);
+  const height = view.getUint16(14, true);
+  const rate = view.getUint32(16, true);
+  const scale = view.getUint32(20, true);
+  const declaredFrameCount = view.getUint32(24, true);
+  const fps = rate && scale ? rate / scale : undefined;
+  const segments: Av1Segment[] = [];
+  let offset = headerSize;
+  while (offset < bytes.length) {
+    if (offset + 12 > bytes.length) throw new Error(`IVF 帧 #${segments.length} 的 12 字节帧头不完整`);
+    const frameSize = view.getUint32(offset, true);
+    const rawTimestamp = view.getBigUint64(offset + 4, true);
+    const sampleOffset = offset + 12;
+    if (sampleOffset + frameSize > bytes.length) throw new Error(`IVF 帧 #${segments.length} 的大小超过文件边界`);
+    segments.push({
+      data: bytes.subarray(sampleOffset, sampleOffset + frameSize),
+      baseOffset: sampleOffset,
+      sampleOffset,
+      sampleSize: frameSize,
+      timestamp: fps ? Math.round(Number(rawTimestamp) * 1_000_000 / fps) : undefined,
+    });
+    offset = sampleOffset + frameSize;
+    if (segments.length > 100_000) throw new Error("IVF 帧超过 100,000 个，为避免浏览器失去响应已停止解析");
+  }
+  if (!segments.length) throw new Error("IVF 文件中没有视频帧");
+  return analyzeAv1Segments(bytes, segments, { name: "IVF", width, height, fps, declaredFrameCount });
 }
 
 function extensionOf(fileName: string) {
@@ -477,6 +550,7 @@ function detectAnnexBCodec(bytes: Uint8Array): CodecKind {
 
 export function analyzeBitstream(bytes: Uint8Array, fileName = ""): Analysis {
   const extension = extensionOf(fileName);
+  if (extension === ".ivf" || (bytes.length >= 4 && readAscii(bytes, 0, 4) === "DKIF")) return analyzeIvf(bytes);
   if ([".h265", ".265", ".hevc"].includes(extension ?? "")) return annexBUnits(bytes, "h265");
   if ([".h266", ".266", ".vvc"].includes(extension ?? "")) return annexBUnits(bytes, "h266");
   if ([".av1", ".obu"].includes(extension ?? "")) return analyzeAv1(bytes);

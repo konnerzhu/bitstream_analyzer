@@ -45,6 +45,7 @@ Drop in an Annex-B NAL stream or a low-overhead AV1 OBU stream and BitScope pars
 | Raw H.265 Annex-B (`.h265`, `.265`, `.hevc`) | ✅ | VPS/SPS/PPS, VCL units, layers, and CTU size |
 | Raw H.266 Annex-B (`.h266`, `.266`, `.vvc`) | ✅ | Structural NAL analysis; browser decoding is not available |
 | Low-overhead AV1 OBU (`.av1`, `.obu`) | ✅ | Sized OBUs, Sequence Header, frames, tiles, and metadata |
+| AV1 IVF (`.ivf`) | ✅ | DKIF header, dimensions, time base, frame records, and contained OBUs |
 | MP4 / MOV | — | Extract the elementary stream first |
 | MKV / WebM | — | Container demuxing is not implemented yet |
 | MPEG-TS | — | Container demuxing is not implemented yet |
@@ -85,7 +86,7 @@ Open [http://localhost:3000](http://localhost:3000), then drag a supported eleme
 
 ## Using the analyzer
 
-1. Load an AVC/HEVC/VVC Annex-B stream or an AV1 OBU stream.
+1. Load an AVC/HEVC/VVC Annex-B stream, an AV1 OBU stream, or an AV1 IVF file.
 2. Select a frame, NAL unit, or OBU from the timeline/list.
 3. Inspect the synchronized decoded picture and syntax panel.
 4. Enable the coding-block overlay and click a block to view its address, coordinates, bounds, and available slice association.
@@ -115,7 +116,7 @@ The analyzer is written in TypeScript with React 19 and vinext. Parsing and deco
 
 ## Known limitations
 
-- Raw Annex-B NAL streams and low-overhead AV1 OBU streams only; container demuxing is not included.
+- Raw Annex-B NAL streams, low-overhead AV1 OBU streams, and AV1 IVF are supported; general-purpose container demuxing is not included.
 - Decoded output depends on the browser, operating system, and available AVC/HEVC/AV1 codec implementation; VVC is analysis-only.
 - Block syntax is not yet fully entropy-decoded, so partitions, motion vectors, references, and residual data are not displayed.
 - Interlaced streams and less common parameter-set combinations may expose fields that are parsed but not visualized.

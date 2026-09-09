@@ -10,6 +10,7 @@ export type NalUnit = {
   index: number; offset: number; size: number; startCodeSize: number; type: number;
   typeName: string; refIdc: number; sliceType?: string; firstMb?: number; hex: string;
   headerSize?: number; keyFrame?: boolean; frameStart?: boolean; layerId?: number; temporalId?: number;
+  sampleOffset?: number; sampleSize?: number; timestamp?: number;
   fields?: Record<string, string | number | boolean>;
 };
 
@@ -18,6 +19,7 @@ export type Analysis = {
   idrCount: number; totalBytes: number; counts: Map<number, number>;
   codecKind: CodecKind; codecName: string; unitName: "NAL" | "OBU"; blockName: string;
   blockSize: number; parameterSetTypes: number[]; parameterSetName: string;
+  containerName?: string; declaredFrameCount?: number;
 };
 
 const NAL_NAMES = new Map<number, string>([
