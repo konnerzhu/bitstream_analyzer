@@ -3,6 +3,7 @@
 import { ChangeEvent, DragEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Analysis, CodecKind, NalUnit, SUPPORTED_EXTENSIONS, analyzeBitstream, formatBytes, unitColor } from "./codecs";
 import { analyzeH264Subblocks } from "./h264-subblocks";
+import { Av1SubblockAnalysis, inspectAv1Subblocks } from "./av1-subblocks";
 
 const MAX_FILE_SIZE = 200 * 1024 * 1024;
 const ACCEPTED_FILES = ".h264,.264,.avc,.h265,.265,.hevc,.h266,.266,.vvc,.av1,.obu,.ivf,video/h264,video/h265,video/av1";
@@ -38,12 +39,16 @@ function DecodedPreview({ bytes, analysis, selected, onSelect }: { bytes: Uint8A
   const [message, setMessage] = useState("正在初始化解码器…");
   const [showMacroblocks, setShowMacroblocks] = useState(true);
   const [selectedMacroblock, setSelectedMacroblock] = useState(0);
+  const [selectedAv1Block, setSelectedAv1Block] = useState(0);
+  const [av1Inspection, setAv1Inspection] = useState<{ source: Uint8Array; framePosition: number; result: Av1SubblockAnalysis } | null>(null);
   const [zoom, setZoom] = useState(1);
   const [zoomOrigin, setZoomOrigin] = useState({ x: 50, y: 50 });
   const frames = useMemo(() => analysis.units.filter(unit => unit.frameStart), [analysis]);
   const framePosition = Math.max(0, frames.findLastIndex(frame => frame.index <= (selected?.index ?? 0)));
   const target = frames[framePosition];
-  const subblockAnalysis = useMemo(() => target ? analyzeH264Subblocks(bytes, analysis, target.index) : null, [analysis, bytes, target]);
+  const h264Subblocks = useMemo(() => target ? analyzeH264Subblocks(bytes, analysis, target.index) : null, [analysis, bytes, target]);
+  const av1Subblocks = av1Inspection?.source === bytes && av1Inspection.framePosition === framePosition ? av1Inspection.result : null;
+  const av1SubblocksLoading = analysis.codecKind === "av1" && Boolean(target) && av1Subblocks === null;
   const blockSize = analysis.blockSize;
   const macroblockColumns = Math.ceil((analysis.sps?.width ?? 0) / blockSize);
   const macroblockRows = Math.ceil((analysis.sps?.height ?? 0) / blockSize);
@@ -58,9 +63,24 @@ function DecodedPreview({ bytes, analysis, selected, onSelect }: { bytes: Uint8A
   }, [analysis.units, framePosition, frames, target]);
   const slicePosition = Math.max(0, frameSlices.findLastIndex(unit => (unit.firstMb ?? 0) <= macroblockAddress));
   const macroblockSlice = frameSlices[slicePosition];
-  const parsedMacroblock = subblockAnalysis?.macroblocks[macroblockAddress];
+  const parsedMacroblock = h264Subblocks?.macroblocks[macroblockAddress];
+  const av1LeafBlock = av1Subblocks?.status === "ready" ? av1Subblocks.blocks[selectedAv1Block] : undefined;
+  const blockUnit = analysis.codecKind === "av1" ? target : macroblockSlice;
   const sliceEnd = Math.min(macroblockCount - 1, (frameSlices[slicePosition + 1]?.firstMb ?? macroblockCount) - 1);
   const unavailableMessage = analysis.codecKind === "h266" ? "当前 WebCodecs 尚未提供 H.266/VVC 解码能力" : !analysis.sps ? `码流缺少可用的 ${analysis.parameterSetName}，无法配置解码器` : typeof VideoDecoder === "undefined" ? "当前浏览器不支持 WebCodecs VideoDecoder" : "";
+
+  useEffect(() => {
+    let cancelled = false;
+    if (analysis.codecKind !== "av1" || !target) return;
+    const controller = new AbortController();
+    inspectAv1Subblocks(bytes, analysis, framePosition, controller.signal).then(result => {
+      if (cancelled) return;
+      setAv1Inspection({ source: bytes, framePosition, result });
+      setSelectedAv1Block(0);
+      if (result.status === "ready" && result.blocks[0]) setSelectedMacroblock(result.blocks[0].superblockAddress);
+    });
+    return () => { cancelled = true; controller.abort(); };
+  }, [analysis, bytes, framePosition, target]);
 
   useEffect(() => {
     const element = canvasWrap.current;
@@ -89,10 +109,10 @@ function DecodedPreview({ bytes, analysis, selected, onSelect }: { bytes: Uint8A
     for (let y = blockSize; y < sps.height; y += blockSize) { context.moveTo(0, y + .5); context.lineTo(sps.width, y + .5); }
     context.lineWidth = Math.max(1, sps.width / 1600);
     context.strokeStyle = "rgba(217,255,67,.58)"; context.stroke();
-    if (analysis.codecKind === "h264" && subblockAnalysis) {
+    if (analysis.codecKind === "h264" && h264Subblocks) {
       context.beginPath();
       let partitionBudget = 20_000;
-      for (const macroblock of subblockAnalysis.macroblocks) {
+      for (const macroblock of h264Subblocks.macroblocks) {
         if (!macroblock || macroblock.partitions.length <= 1 || partitionBudget <= 0) continue;
         const originX = (macroblock.address % macroblockColumns) * 16;
         const originY = Math.floor(macroblock.address / macroblockColumns) * 16;
@@ -104,23 +124,47 @@ function DecodedPreview({ bytes, analysis, selected, onSelect }: { bytes: Uint8A
       context.lineWidth = Math.max(.65, sps.width / 2400);
       context.strokeStyle = "rgba(63,224,255,.8)"; context.stroke();
     }
+    if (analysis.codecKind === "av1" && av1Subblocks?.status === "ready") {
+      context.beginPath();
+      let leafBudget = 100_000;
+      for (const block of av1Subblocks.blocks) {
+        if (leafBudget-- <= 0) break;
+        context.rect(block.x + .5, block.y + .5, block.width, block.height);
+      }
+      context.lineWidth = Math.max(.65, sps.width / 2400);
+      context.strokeStyle = "rgba(63,224,255,.82)"; context.stroke();
+    }
+    const selectedX = av1LeafBlock?.x ?? macroblockColumn * blockSize;
+    const selectedY = av1LeafBlock?.y ?? macroblockRow * blockSize;
+    const selectedWidth = av1LeafBlock?.width ?? Math.min(blockSize, sps.width - macroblockColumn * blockSize);
+    const selectedHeight = av1LeafBlock?.height ?? Math.min(blockSize, sps.height - macroblockRow * blockSize);
     context.fillStyle = "rgba(255,107,53,.34)";
-    context.fillRect(macroblockColumn * blockSize, macroblockRow * blockSize, Math.min(blockSize, sps.width - macroblockColumn * blockSize), Math.min(blockSize, sps.height - macroblockRow * blockSize));
+    context.fillRect(selectedX, selectedY, selectedWidth, selectedHeight);
     context.strokeStyle = "#ff6b35"; context.lineWidth = Math.max(2, sps.width / 700);
-    context.strokeRect(macroblockColumn * blockSize + 1, macroblockRow * blockSize + 1, Math.max(0, Math.min(blockSize - 2, sps.width - macroblockColumn * blockSize - 2)), Math.max(0, Math.min(blockSize - 2, sps.height - macroblockRow * blockSize - 2)));
+    context.strokeRect(selectedX + 1, selectedY + 1, Math.max(0, selectedWidth - 2), Math.max(0, selectedHeight - 2));
     if (parsedMacroblock) {
       context.beginPath();
       for (const partition of parsedMacroblock.partitions) context.rect(macroblockColumn * 16 + partition.x + 1, macroblockRow * 16 + partition.y + 1, Math.max(0, partition.width - 2), Math.max(0, partition.height - 2));
       context.lineWidth = Math.max(1.5, sps.width / 800); context.strokeStyle = "#3fe0ff"; context.stroke();
     }
-  }, [analysis.codecKind, analysis.sps, blockSize, macroblockColumn, macroblockColumns, macroblockRow, parsedMacroblock, showMacroblocks, subblockAnalysis]);
+  }, [analysis.codecKind, analysis.sps, av1LeafBlock, av1Subblocks, blockSize, h264Subblocks, macroblockColumn, macroblockColumns, macroblockRow, parsedMacroblock, showMacroblocks]);
 
   const selectMacroblockAt = (clientX: number, clientY: number) => {
     const overlay = macroblockCanvas.current;
     if (!overlay || !showMacroblocks || !macroblockColumns || !macroblockRows) return;
     const bounds = overlay.getBoundingClientRect();
-    const column = Math.min(macroblockColumns - 1, Math.max(0, Math.floor((clientX - bounds.left) / bounds.width * macroblockColumns)));
-    const row = Math.min(macroblockRows - 1, Math.max(0, Math.floor((clientY - bounds.top) / bounds.height * macroblockRows)));
+    const pictureX = Math.min(overlay.width - 1, Math.max(0, (clientX - bounds.left) / bounds.width * overlay.width));
+    const pictureY = Math.min(overlay.height - 1, Math.max(0, (clientY - bounds.top) / bounds.height * overlay.height));
+    if (analysis.codecKind === "av1" && av1Subblocks?.status === "ready") {
+      const block = av1Subblocks.blocks.find(candidate => pictureX >= candidate.x && pictureX < candidate.x + candidate.width && pictureY >= candidate.y && pictureY < candidate.y + candidate.height);
+      if (block) {
+        setSelectedAv1Block(block.id);
+        setSelectedMacroblock(block.superblockAddress);
+        return;
+      }
+    }
+    const column = Math.min(macroblockColumns - 1, Math.max(0, Math.floor(pictureX / blockSize)));
+    const row = Math.min(macroblockRows - 1, Math.max(0, Math.floor(pictureY / blockSize)));
     setSelectedMacroblock(row * macroblockColumns + column);
   };
 
@@ -197,10 +241,16 @@ function DecodedPreview({ bytes, analysis, selected, onSelect }: { bytes: Uint8A
     <div ref={canvasWrap} className="canvas-wrap" title="在画面上滚动鼠标以缩放">
       <div className="frame-stage" style={{ transform: `scale(${zoom})`, transformOrigin: `${zoomOrigin.x}% ${zoomOrigin.y}%` }}>
         <canvas ref={canvas} aria-label="当前选择位置的解码画面" />
-        <canvas ref={macroblockCanvas} className={`macroblock-overlay ${showMacroblocks ? "visible" : ""}`} role="button" tabIndex={showMacroblocks ? 0 : -1} aria-label={`${analysis.blockName}网格，当前选择 ${macroblockAddress}`} onClick={event => selectMacroblockAt(event.clientX, event.clientY)} onKeyDown={event => {
+        <canvas ref={macroblockCanvas} className={`macroblock-overlay ${showMacroblocks ? "visible" : ""}`} role="button" tabIndex={showMacroblocks ? 0 : -1} aria-label={`${analysis.blockName}网格，当前选择 ${analysis.codecKind === "av1" && av1LeafBlock ? `叶子块 ${av1LeafBlock.id}` : macroblockAddress}`} onClick={event => selectMacroblockAt(event.clientX, event.clientY)} onKeyDown={event => {
           let next = macroblockAddress;
           if (event.key === "ArrowLeft") next--; else if (event.key === "ArrowRight") next++; else if (event.key === "ArrowUp") next -= macroblockColumns; else if (event.key === "ArrowDown") next += macroblockColumns; else return;
-          event.preventDefault(); setSelectedMacroblock(Math.min(macroblockCount - 1, Math.max(0, next)));
+          event.preventDefault();
+          const address = Math.min(macroblockCount - 1, Math.max(0, next));
+          setSelectedMacroblock(address);
+          if (analysis.codecKind === "av1" && av1Subblocks?.status === "ready") {
+            const block = av1Subblocks.blocks.find(candidate => candidate.superblockAddress === address);
+            if (block) setSelectedAv1Block(block.id);
+          }
         }} />
       </div>
       <div className="zoom-controls" aria-label="画面缩放控制">
@@ -216,15 +266,16 @@ function DecodedPreview({ bytes, analysis, selected, onSelect }: { bytes: Uint8A
       <input type="range" min="0" max={Math.max(0, frames.length - 1)} value={framePosition} onChange={event => onSelect(frames[Number(event.target.value)])} aria-label="选择解码帧" />
       <button disabled={framePosition >= frames.length - 1} onClick={() => onSelect(frames[framePosition + 1])}>下一帧 →</button>
     </div>
-    <div className="macroblock-toolbar"><button className={showMacroblocks ? "active" : ""} onClick={() => setShowMacroblocks(value => !value)}><i />{analysis.blockName}网格 {showMacroblocks ? "ON" : "OFF"}</button><span>{analysis.codecKind === "h264" && subblockAnalysis ? `${subblockAnalysis.entropyMode ?? "H.264"} · ${subblockAnalysis.message}` : `${macroblockColumns} × ${macroblockRows} 个 ${blockSize}×${blockSize} 亮度块 · 点击画面选择`}</span></div>
+    <div className="macroblock-toolbar"><button className={showMacroblocks ? "active" : ""} onClick={() => setShowMacroblocks(value => !value)}><i />{analysis.blockName}网格 {showMacroblocks ? "ON" : "OFF"}</button><span>{analysis.codecKind === "h264" && h264Subblocks ? `${h264Subblocks.entropyMode ?? "H.264"} · ${h264Subblocks.message}` : analysis.codecKind === "av1" ? (av1SubblocksLoading ? "libaom inspection · 正在熵解码 AV1 块划分…" : av1Subblocks?.message ?? "等待 AV1 inspection") : `${macroblockColumns} × ${macroblockRows} 个 ${blockSize}×${blockSize} 亮度块 · 点击画面选择`}</span></div>
     {showMacroblocks && macroblockCount > 0 && <div className="macroblock-info">
       <div><span>{analysis.blockName}地址</span><strong>#{macroblockAddress}</strong><small>栅格扫描顺序</small></div>
-      <div><span>位置</span><strong>R{macroblockRow} / C{macroblockColumn}</strong><small>x {macroblockColumn * blockSize}–{Math.min((macroblockColumn + 1) * blockSize - 1, (analysis.sps?.width ?? 1) - 1)} · y {macroblockRow * blockSize}–{Math.min((macroblockRow + 1) * blockSize - 1, (analysis.sps?.height ?? 1) - 1)}</small></div>
-      <div><span>所属切片</span><strong>{macroblockSlice ? `${macroblockSlice.sliceType}-SLICE` : "—"}</strong><small>{macroblockSlice ? `MB ${macroblockSlice.firstMb}–${sliceEnd}` : "无切片信息"}</small></div>
-      <div><span>块划分</span><strong>{parsedMacroblock?.typeName ?? `${blockSize}×${blockSize} ${analysis.blockName}`}</strong><small>{parsedMacroblock ? `${parsedMacroblock.partitions.length} 个分区 · ${parsedMacroblock.partitions.map(partition => `${partition.width}×${partition.height}`).join(" / ")}` : analysis.codecKind === "h264" ? (subblockAnalysis?.message ?? "未解析到宏块语法") : "子块语法尚未熵解码"}</small></div>
-      <div><span>{analysis.unitName} 单元</span><strong>{macroblockSlice ? `#${macroblockSlice.index} · ${analysis.codecKind === "av1" ? "O" : "T"}${macroblockSlice.type}` : "—"}</strong><small>{macroblockSlice ? `layer ${macroblockSlice.layerId ?? 0} · 0x${macroblockSlice.offset.toString(16)}` : "—"}</small></div>
+      <div><span>位置</span><strong>{av1LeafBlock ? `MI R${av1LeafBlock.y / 4} / C${av1LeafBlock.x / 4}` : `R${macroblockRow} / C${macroblockColumn}`}</strong><small>{av1LeafBlock ? `x ${av1LeafBlock.x}–${av1LeafBlock.x + av1LeafBlock.width - 1} · y ${av1LeafBlock.y}–${av1LeafBlock.y + av1LeafBlock.height - 1}` : `x ${macroblockColumn * blockSize}–${Math.min((macroblockColumn + 1) * blockSize - 1, (analysis.sps?.width ?? 1) - 1)} · y ${macroblockRow * blockSize}–${Math.min((macroblockRow + 1) * blockSize - 1, (analysis.sps?.height ?? 1) - 1)}`}</small></div>
+      <div><span>{analysis.codecKind === "av1" ? "所属 Tile" : "所属切片"}</span><strong>{av1LeafBlock ? `R${av1LeafBlock.tileRow} / C${av1LeafBlock.tileColumn}` : macroblockSlice ? `${macroblockSlice.sliceType}-SLICE` : "—"}</strong><small>{av1LeafBlock ? `${av1Subblocks?.tileColumns} × ${av1Subblocks?.tileRows} tiles` : macroblockSlice ? `MB ${macroblockSlice.firstMb}–${sliceEnd}` : "无切片信息"}</small></div>
+      <div><span>块划分</span><strong>{av1LeafBlock ? `${av1LeafBlock.sizeName} 叶子块` : parsedMacroblock?.typeName ?? `${blockSize}×${blockSize} ${analysis.blockName}`}</strong><small>{av1LeafBlock ? `熵解码块 #${av1LeafBlock.id} · 所属 SB #${av1LeafBlock.superblockAddress}` : parsedMacroblock ? `${parsedMacroblock.partitions.length} 个分区 · ${parsedMacroblock.partitions.map(partition => `${partition.width}×${partition.height}`).join(" / ")}` : analysis.codecKind === "h264" ? (h264Subblocks?.message ?? "未解析到宏块语法") : (av1Subblocks?.message ?? "子块语法尚未熵解码")}</small></div>
+      <div><span>{analysis.unitName} 单元</span><strong>{blockUnit ? `#${blockUnit.index} · ${analysis.codecKind === "av1" ? "O" : "T"}${blockUnit.type}` : "—"}</strong><small>{blockUnit ? `layer ${blockUnit.layerId ?? 0} · 0x${blockUnit.offset.toString(16)}` : "—"}</small></div>
       <div><span>色度覆盖</span><strong>{analysis.sps?.chromaFormat ?? "—"}</strong><small>{analysis.sps?.chromaFormat === "4:2:0" ? "Cb/Cr 各 8×8" : "由 SPS 色度格式决定"}</small></div>
       {analysis.codecKind === "h264" && <div><span>宏块语法</span><strong>{parsedMacroblock ? `${parsedMacroblock.prediction}${parsedMacroblock.skipped ? " · SKIP" : ""}` : "—"}</strong><small>{parsedMacroblock ? `mb_type ${parsedMacroblock.rawType ?? "skip"} · CBP ${parsedMacroblock.codedBlockPattern ?? 0}${parsedMacroblock.qpDelta !== undefined ? ` · ΔQP ${parsedMacroblock.qpDelta}` : ""}` : "该地址没有可用的 CAVLC 解析结果"}</small></div>}
+      {analysis.codecKind === "av1" && <div><span>AV1 块语法</span><strong>{av1LeafBlock ? `${av1LeafBlock.mode}${av1LeafBlock.skipped ? " · SKIP" : ""}` : "—"}</strong><small>{av1LeafBlock ? `TX ${av1LeafBlock.transformSize} · base_q_idx ${av1Subblocks?.baseQIndex ?? "—"} · frame_type ${av1Subblocks?.frameType ?? "—"}` : av1SubblocksLoading ? "正在通过 libaom inspection 熵解码" : av1Subblocks?.message ?? "无可用解析结果"}</small></div>}
     </div>}
   </section>;
 }

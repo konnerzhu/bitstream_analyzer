@@ -34,7 +34,7 @@ Drop in an Annex-B NAL stream or a low-overhead AV1 OBU stream and BitScope pars
 | **02** | NAL / OBU timeline | Codec-specific type, layer, temporal ID, byte offset, payload size, and header size |
 | **03** | Decoded picture | Frame-by-frame output synchronized with the selected access unit |
 | **04** | Coding-block view | Codec-aware Macroblock, CTU, or Superblock grid with click selection and coordinates |
-| **05** | H.264 subblocks | CAVLC macroblock types and 16×16, 16×8, 8×16, 8×8, 8×4, 4×8, and 4×4 partition overlays |
+| **05** | Entropy-decoded blocks | H.264 CAVLC macroblock partitions plus AV1 IVF leaf-block, prediction, transform, and skip overlays |
 | **06** | Syntax details | Parsed sequence fields and unit headers alongside a bounded hexadecimal view |
 | **07** | Private by design | Analysis stays inside the browser; the source stream is never uploaded |
 
@@ -46,7 +46,7 @@ Drop in an Annex-B NAL stream or a low-overhead AV1 OBU stream and BitScope pars
 | Raw H.265 Annex-B (`.h265`, `.265`, `.hevc`) | ✅ | VPS/SPS/PPS, VCL units, layers, and CTU size |
 | Raw H.266 Annex-B (`.h266`, `.266`, `.vvc`) | ✅ | Structural NAL analysis; browser decoding is not available |
 | Low-overhead AV1 OBU (`.av1`, `.obu`) | ✅ | Sized OBUs, Sequence Header, frames, tiles, and metadata |
-| AV1 IVF (`.ivf`) | ✅ | DKIF header, dimensions, time base, frame records, and contained OBUs |
+| AV1 IVF (`.ivf`) | ✅ | DKIF header, dimensions, time base, frame records, contained OBUs, and libaom inspection block syntax |
 | MP4 / MOV | — | Extract the elementary stream first |
 | MKV / WebM | — | Container demuxing is not implemented yet |
 | MPEG-TS | — | Container demuxing is not implemented yet |
@@ -61,7 +61,7 @@ The current input limit is **200 MB** per file. Parsing is capped at **100,000 N
 | H.264 / AVC | SPS profile, level, dimensions, timing, chroma/bit depth; NAL and slice summary; CAVLC I/P macroblock type, CBP, ΔQP, and partition geometry |
 | H.265 / HEVC | VPS/SPS/PPS detection, profile, level, dimensions, chroma/bit depth, layer/temporal IDs, IRAP frames, and SPS-derived CTU size |
 | H.266 / VVC | NAL type, VPS/SPS/PPS/APS/PH/SEI recognition, layer/temporal IDs, random-access units, and declared CTU size |
-| AV1 | OBU framing, Sequence Header profile/level/dimensions/chroma/bit depth, frame type, tile/metadata units, and 64/128 Superblock size |
+| AV1 | OBU framing, Sequence Header metadata, frame/tile units, 64/128 Superblocks, and IVF entropy-decoded leaf block size/mode/transform/skip |
 | Pictures | WebCodecs decoding for AVC, HEVC, or AV1 when that codec/configuration is available in the browser; VVC parsing only |
 
 > [!NOTE]
@@ -103,6 +103,8 @@ If WebCodecs or a matching browser decoder is unavailable, bitstream parsing sti
 | `app/codecs.ts` | Codec detection plus HEVC, VVC, and AV1 structural parsing |
 | `app/h264.ts` | Annex-B scanning, bit reading, emulation-prevention removal, and H.264 syntax parsing |
 | `app/h264-subblocks.ts` | Bounded H.264 SPS/PPS/Slice and CAVLC macroblock/subpartition parsing |
+| `app/av1-subblocks.ts` | Validates and converts libaom inspection MI maps into selectable AV1 leaf blocks |
+| `public/av1-inspector-worker.js` | Runs the pinned libaom WebAssembly inspector off the UI thread with resource limits |
 | `app/analyzer.css` | Responsive analyzer layout and visual system |
 | `public/` | Repository and application artwork |
 
@@ -121,7 +123,9 @@ The analyzer is written in TypeScript with React 19 and vinext. Parsing and deco
 - Raw Annex-B NAL streams, low-overhead AV1 OBU streams, and AV1 IVF are supported; general-purpose container demuxing is not included.
 - Decoded output depends on the browser, operating system, and available AVC/HEVC/AV1 codec implementation; VVC is analysis-only.
 - H.264 subblock parsing currently covers progressive 8-bit 4:2:0 CAVLC I/P slices. CABAC, B slices, FMO, interlaced/MBAFF pictures, motion-vector values, and residual coefficient values are reported as unsupported rather than inferred.
-- HEVC, VVC, and AV1 still show their top-level coding-unit grid without entropy-decoded subpartitions.
+- AV1 subblock inspection currently requires an IVF container. Raw low-overhead OBU streams continue to show their top-level Superblock grid because the bundled inspector consumes IVF.
+- AV1 inspection runs in a dedicated Worker and is bounded to 64 MB input, 20 seconds per selected frame, 32 MB JSON output, and validated matrix/block counts.
+- HEVC and VVC still show their top-level coding-unit grid without entropy-decoded subpartitions.
 - Interlaced streams and less common parameter-set combinations may expose fields that are parsed but not visualized.
 
 ## Roadmap
@@ -131,7 +135,7 @@ The analyzer is written in TypeScript with React 19 and vinext. Parsing and deco
 - [ ] Add H.264 CABAC/B-slice support, motion vectors, references, and residual coefficient details
 - [ ] Add MP4/MKV/MPEG-TS demuxing and AVCC conversion
 - [ ] Export analysis reports and frame/block data
-- [ ] Add deeper HEVC, VVC, and AV1 picture/slice syntax parsing
+- [ ] Add deeper HEVC/VVC picture syntax and raw-OBU AV1 inspection
 
 ## Contributing
 
