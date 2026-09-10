@@ -80,6 +80,9 @@ const english = {
   av1BlockSyntax: "AV1 block syntax",
   intraPrediction: "Intra prediction",
   intraModes: "Intra modes",
+  intraModeDistribution: "Intra modes distribution",
+  intraModeSamples: "intra blocks",
+  distributionLimited: "first 1,000,000 modes",
   predictionBlocks: "prediction blocks",
   nominalDirection: "Nominal direction",
   nonDirectional: "Non-directional",
@@ -116,7 +119,6 @@ const english = {
   unitDetails: "Unit details",
   selectUnit: "Select a unit to inspect its details.",
   hexPreview: "HEX PREVIEW · FIRST 48 BYTES",
-  typeDistribution: "Type distribution",
   analyzedLocally: "ANALYZED LOCALLY",
 } as const;
 
@@ -202,6 +204,9 @@ const simplifiedChinese: UiCopy = {
   av1BlockSyntax: "AV1 块语法",
   intraPrediction: "帧内预测",
   intraModes: "帧内模式",
+  intraModeDistribution: "帧内模式分布",
+  intraModeSamples: "个帧内块",
+  distributionLimited: "仅统计前 1,000,000 个模式",
   predictionBlocks: "个预测块",
   nominalDirection: "标称方向",
   nonDirectional: "非方向模式",
@@ -238,7 +243,6 @@ const simplifiedChinese: UiCopy = {
   unitDetails: "单元详情",
   selectUnit: "选择一个单元查看详情。",
   hexPreview: "HEX PREVIEW · 前 48 字节",
-  typeDistribution: "类型分布",
   analyzedLocally: "本地分析完成",
 };
 

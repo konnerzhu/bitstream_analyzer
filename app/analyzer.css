@@ -25,7 +25,7 @@ button { cursor:pointer; }
 .stat>span { font:10px monospace; letter-spacing:.12em; text-transform:uppercase; }
 .stat strong { font-size:clamp(22px,2.1vw,33px); letter-spacing:-.045em; margin:auto 0 3px; }
 .stat small { font:10px monospace; opacity:.55; }
-.decode-card,.timeline-card,.nal-card,.detail-card,.distribution-card,.stream-card { border:2px solid var(--ink); background:var(--cream); }
+.decode-card,.timeline-card,.nal-card,.detail-card,.intra-distribution-card { border:2px solid var(--ink); background:var(--cream); }
 .decode-card { margin-top:18px; padding:20px 22px; }
 .canvas-wrap { position:relative; min-height:clamp(240px,46vw,680px); display:grid; place-items:center; overflow:hidden; background:#080807; border:1px solid var(--ink); }
 .canvas-wrap::before { content:""; position:absolute; inset:0; background-image:linear-gradient(rgba(255,255,255,.035) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.035) 1px,transparent 1px); background-size:24px 24px; }
@@ -85,7 +85,7 @@ button.nal-row:hover,button.nal-row.selected { background:var(--acid); }
 .table-head { position:sticky; top:0; z-index:2; background:var(--ink); color:var(--paper); min-height:32px; font-size:9px; letter-spacing:.08em; }
 .nal-badge { display:inline-grid; place-items:center; min-width:27px; height:20px; padding:0 4px; color:#111; font:bold 9px monospace; border:1px solid #111; margin-right:5px; }
 aside { display:flex; flex-direction:column; gap:18px; }
-.detail-card,.distribution-card,.stream-card { padding:20px; }
+.detail-card,.intra-distribution-card { padding:20px; }
 .detail-title { display:flex; align-items:center; gap:9px; border-bottom:1px solid var(--ink); padding-bottom:14px; margin-bottom:8px; }
 .detail-title .nal-badge { height:35px; min-width:42px; }
 .detail-title b,.detail-title small { display:block; }
@@ -96,9 +96,10 @@ dt { opacity:.58; }
 dd { margin:0; text-align:right; }
 .hex-label { font:9px monospace; letter-spacing:.1em; margin:17px 0 7px; }
 pre { margin:0; padding:12px; background:var(--ink); color:var(--acid); white-space:pre-wrap; overflow-wrap:anywhere; font:10px/1.7 monospace; max-height:140px; overflow:auto; }
-.bar-row { display:grid; grid-template-columns:28px 1fr 28px; gap:8px; align-items:center; margin:9px 0; font:10px monospace; }
-.bar-row>div { height:9px; background:#e5e0d5; }
-.bar-row i { display:block; height:100%; border-right:1px solid var(--ink); }
-.bar-row b { text-align:right; }
+.mode-bar-row { display:grid; grid-template-columns:minmax(90px,1.2fr) minmax(58px,1fr) 42px; gap:8px; align-items:center; margin:9px 0; font:10px monospace; }
+.mode-bar-row>span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.mode-bar-row>div { height:9px; background:#e5e0d5; }
+.mode-bar-row i { display:block; height:100%; min-width:2px; background:var(--orange); border-right:1px solid var(--ink); }
+.mode-bar-row b { text-align:right; }
 @media(max-width:900px){.stats-grid{grid-template-columns:1fr 1fr}.stat:nth-child(2){border-right:0}.stat:nth-child(-n+2){border-bottom:1px solid var(--ink)}.macroblock-info{grid-template-columns:1fr 1fr}.macroblock-info>div{border-bottom:1px solid var(--ink)}.macroblock-info>div:nth-child(even){border-right:0}.macroblock-info>div:last-child{border-bottom:0}.content-grid{grid-template-columns:1fr}.file-chip{margin-left:auto}.summary-head{padding-top:36px}}
 @media(max-width:560px){.feature-row{display:none}.summary-head{align-items:start}.summary-head .dropzone{min-width:48px;width:48px;padding:0}.summary-head .dropzone b{display:none}.stats-grid{grid-template-columns:1fr}.stat{border-right:0!important;border-bottom:1px solid var(--ink)}.stat:last-child{border-bottom:0}.decode-card{padding:15px 12px}.frame-controls{gap:7px}.frame-controls button{padding:0 7px}.macroblock-toolbar{align-items:flex-start;flex-direction:column}.macroblock-toolbar>span{text-align:left}.macroblock-info{grid-template-columns:1fr}.macroblock-info>div{border-right:0}.nal-card{padding:15px 12px}.nal-row{grid-template-columns:42px minmax(150px,1fr) 45px}.nal-row span:nth-child(4),.nal-row span:nth-child(5){display:none}.file-chip{max-width:170px}.topbar{gap:8px}.brand-button>span:last-child{display:none}}

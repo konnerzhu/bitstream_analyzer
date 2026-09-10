@@ -2,12 +2,48 @@
 
 import { ChangeEvent, DragEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Analysis, CodecKind, NalUnit, SUPPORTED_EXTENSIONS, analyzeBitstream, formatBytes, unitColor } from "./codecs";
-import { analyzeH264Subblocks } from "./h264-subblocks";
+import { H264SubblockAnalysis, analyzeH264Subblocks } from "./h264-subblocks";
 import { Av1LeafBlock, Av1SubblockAnalysis, inspectAv1Subblocks } from "./av1-subblocks";
 import { Locale, getCopy, localizeAv1IntraModeName, localizeBlockName, localizeH264IntraModeName, localizeParameterSetName, localizeTypeName } from "./i18n";
 
 const MAX_FILE_SIZE = 200 * 1024 * 1024;
+const MAX_INTRA_MODE_SAMPLES = 1_000_000;
 const ACCEPTED_FILES = ".h264,.264,.avc,.h265,.265,.hevc,.h266,.266,.vvc,.av1,.obu,.ivf,video/h264,video/h265,video/av1";
+
+type IntraModeDistribution = {
+  items: Array<{ key: string; name: string; count: number }>;
+  sampledCount: number;
+  limited: boolean;
+};
+
+type IntraModeEntry = { key: string; name: string };
+
+function summarizeIntraModes(entries: Iterable<IntraModeEntry>, locale: Locale): IntraModeDistribution | null {
+  const counts = new Map<string, { name: string; count: number }>();
+  let sampledCount = 0;
+  let limited = false;
+  for (const entry of entries) {
+    if (sampledCount >= MAX_INTRA_MODE_SAMPLES) { limited = true; break; }
+    const current = counts.get(entry.key);
+    counts.set(entry.key, { name: entry.name, count: (current?.count ?? 0) + 1 });
+    sampledCount += 1;
+  }
+  const items = [...counts.entries()].map(([key, value]) => ({ key, ...value })).sort((left, right) => right.count - left.count || left.name.localeCompare(right.name, locale));
+  return items.length ? { items, sampledCount, limited } : null;
+}
+
+function* h264IntraModeEntries(analysis: H264SubblockAnalysis | null, locale: Locale): Generator<IntraModeEntry> {
+  for (const macroblock of analysis?.macroblocks ?? []) {
+    for (const mode of macroblock?.intraModes ?? []) yield { key: mode.name, name: localizeH264IntraModeName(mode.name, locale) };
+  }
+}
+
+function* av1IntraModeEntries(analysis: Av1SubblockAnalysis | null, locale: Locale): Generator<IntraModeEntry> {
+  if (analysis?.status !== "ready") return;
+  for (const block of analysis.blocks) {
+    if (block.intraMode) yield { key: block.mode, name: localizeAv1IntraModeName(block.mode, block.intraMode.name, locale) };
+  }
+}
 
 function validateFile(file: File, locale: Locale) {
   const copy = getCopy(locale);
@@ -62,7 +98,7 @@ function addAv1DirectionPath(context: CanvasRenderingContext2D, block: Av1LeafBl
   return addDirectionPath(context, block.x, block.y, block.width, block.height, block.intraMode?.nominalAngle, 8);
 }
 
-function DecodedPreview({ bytes, analysis, selected, onSelect, locale }: { bytes: Uint8Array; analysis: Analysis; selected: NalUnit | null; onSelect: (unit: NalUnit) => void; locale: Locale }) {
+function DecodedPreview({ bytes, analysis, selected, onSelect, onIntraModeDistributionChange, locale }: { bytes: Uint8Array; analysis: Analysis; selected: NalUnit | null; onSelect: (unit: NalUnit) => void; onIntraModeDistributionChange: (distribution: IntraModeDistribution | null) => void; locale: Locale }) {
   const copy = getCopy(locale);
   const canvas = useRef<HTMLCanvasElement>(null);
   const macroblockCanvas = useRef<HTMLCanvasElement>(null);
@@ -106,6 +142,10 @@ function DecodedPreview({ bytes, analysis, selected, onSelect, locale }: { bytes
   }, [locale, parsedMacroblock]);
   const av1LeafBlock = av1Subblocks?.status === "ready" ? av1Subblocks.blocks[selectedAv1Block] : undefined;
   const av1IntraModeName = av1LeafBlock?.intraMode ? localizeAv1IntraModeName(av1LeafBlock.mode, av1LeafBlock.intraMode.name, locale) : undefined;
+  const intraModeDistribution = useMemo<IntraModeDistribution | null>(() => {
+    if (!showIntraModes || !intraModesAvailable) return null;
+    return summarizeIntraModes(analysis.codecKind === "h264" ? h264IntraModeEntries(h264Subblocks, locale) : av1IntraModeEntries(av1Subblocks, locale), locale);
+  }, [analysis.codecKind, av1Subblocks, h264Subblocks, intraModesAvailable, locale, showIntraModes]);
   const blockUnit = analysis.codecKind === "av1" ? target : macroblockSlice;
   const sliceEnd = Math.min(macroblockCount - 1, (frameSlices[slicePosition + 1]?.firstMb ?? macroblockCount) - 1);
   const blockName = localizeBlockName(analysis.blockName, locale);
@@ -113,6 +153,12 @@ function DecodedPreview({ bytes, analysis, selected, onSelect, locale }: { bytes
   const h264StatusMessage = h264Subblocks ? locale === "en" ? `${h264Subblocks.parsedCount.toLocaleString("en-US")} macroblocks parsed${h264Subblocks.status === "partial" ? " · partial result" : ""}` : h264Subblocks.message : "";
   const av1StatusMessage = av1Subblocks?.status === "ready" ? locale === "en" ? `libaom inspection · ${av1Subblocks.blocks.length.toLocaleString("en-US")} entropy-decoded leaf blocks` : av1Subblocks.message : av1Subblocks ? locale === "en" ? "AV1 leaf-block inspection is unavailable for this file" : av1Subblocks.message : copy.waitingForAv1;
   const unavailableMessage = analysis.codecKind === "h266" ? copy.vvcUnsupported : !analysis.sps ? `${copy.missingDecoderConfig} ${parameterSetName}` : typeof VideoDecoder === "undefined" ? copy.webCodecsUnsupported : "";
+
+  useEffect(() => {
+    onIntraModeDistributionChange(intraModeDistribution);
+  }, [intraModeDistribution, onIntraModeDistributionChange]);
+
+  useEffect(() => () => onIntraModeDistributionChange(null), [onIntraModeDistributionChange]);
 
   useEffect(() => {
     let cancelled = false;
@@ -369,6 +415,7 @@ export default function Analyzer({ locale }: { locale: Locale }) {
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
   const [sourceBytes, setSourceBytes] = useState<Uint8Array | null>(null);
+  const [intraModeDistribution, setIntraModeDistribution] = useState<IntraModeDistribution | null>(null);
 
   const openFile = async (file: File) => {
     setError(""); setBusy(true);
@@ -386,7 +433,6 @@ export default function Analyzer({ locale }: { locale: Locale }) {
     return (filter === "all" || unit.type === Number(filter)) && (!q || localizeTypeName(unit.typeName, locale).toLowerCase().includes(q) || String(unit.index).includes(q) || unit.sliceType?.toLowerCase().includes(q));
   }) ?? [], [analysis, filter, locale, query]);
   const counts = analysis ? [...analysis.counts.entries()].sort((a, b) => b[1] - a[1]) : [];
-  const maxCount = counts[0]?.[1] ?? 1;
 
   return <main className={`shell ${analysis ? "analysis-mode" : ""}`}>
     <header className="topbar">
@@ -406,7 +452,7 @@ export default function Analyzer({ locale }: { locale: Locale }) {
         <Stat label={copy.frameRate} value={analysis.sps?.fps ? `${analysis.sps.fps.toFixed(3)} fps` : "—"} note={analysis.sps?.fps ? (analysis.containerName === "IVF" ? copy.fromIvf : analysis.codecKind === "av1" ? copy.fromSequence : copy.fromVui) : copy.frameRateUndeclared} />
         <Stat label={copy.framesKeyframes} value={`${analysis.frameCount} / ${analysis.idrCount}`} note={analysis.duration ? `${copy.about} ${analysis.duration.toFixed(2)} ${copy.seconds}${analysis.declaredFrameCount !== undefined ? ` · ${copy.ivfDeclares} ${analysis.declaredFrameCount} ${copy.frames}` : ""}` : `${analysis.units.length} ${analysis.unitName} ${copy.units}`} />
       </section>
-      {sourceBytes && <DecodedPreview bytes={sourceBytes} analysis={analysis} selected={selected} onSelect={setSelected} locale={locale} />}
+      {sourceBytes && <DecodedPreview bytes={sourceBytes} analysis={analysis} selected={selected} onSelect={setSelected} onIntraModeDistributionChange={setIntraModeDistribution} locale={locale} />}
       <section className="timeline-card">
         <div className="section-title"><div><span>02</span><h3>{analysis.unitName} {copy.timeline}</h3></div><small>{copy.timelineSync}</small></div>
         <div className="timeline" aria-label={`${analysis.unitName} ${copy.timelineAria}`}>{analysis.units.slice(0, 500).map(unit => { const typeName = localizeTypeName(unit.typeName, locale); return <button key={unit.index} title={`#${unit.index} ${typeName}`} aria-label={`${analysis.unitName} ${unit.index} ${typeName}`} className={selected?.index === unit.index ? "active" : ""} style={{ background: unitColor(unit.type, analysis.codecKind) }} onClick={() => setSelected(unit)} />; })}</div>
@@ -422,8 +468,7 @@ export default function Analyzer({ locale }: { locale: Locale }) {
         </section>
         <aside>
           <section className="detail-card"><div className="section-title"><div><span>04</span><h3>{copy.unitDetails}</h3></div></div>{selected ? <><div className="detail-title"><NalBadge unit={selected} codec={analysis.codecKind}/><div><b>{localizeTypeName(selected.typeName, locale)}</b><small>{analysis.unitName} #{selected.index}</small></div></div><dl><div><dt>{analysis.codecKind === "av1" ? "obu_type" : "nal_unit_type"}</dt><dd>{selected.type}</dd></div>{analysis.codecKind === "h264" ? <div><dt>nal_ref_idc</dt><dd>{selected.refIdc}</dd></div> : <><div><dt>layer_id</dt><dd>{selected.layerId ?? 0}</dd></div><div><dt>temporal_id</dt><dd>{selected.temporalId ?? 0}</dd></div></>}<div><dt>{analysis.unitName === "NAL" ? "start_code" : "header_size"}</dt><dd>{analysis.unitName === "NAL" ? selected.startCodeSize : selected.headerSize ?? 1} bytes</dd></div><div><dt>payload_size</dt><dd>{formatBytes(Math.max(0, selected.size - selected.startCodeSize - (selected.headerSize ?? 1)))}</dd></div>{selected.sliceType && <div><dt>frame_or_slice_type</dt><dd>{selected.sliceType}</dd></div>}{selected.firstMb !== undefined && <div><dt>first_block_in_slice</dt><dd>{selected.firstMb}</dd></div>}</dl><p className="hex-label">{copy.hexPreview}</p><pre>{selected.hex}</pre></> : <p>{copy.selectUnit}</p>}</section>
-          <section className="distribution-card"><div className="section-title"><div><span>05</span><h3>{copy.typeDistribution}</h3></div></div>{counts.slice(0, 7).map(([type, count]) => <div className="bar-row" key={type}><span>{analysis.codecKind === "av1" ? "O" : "T"}{type}</span><div><i style={{width:`${Math.max(4, count / maxCount * 100)}%`,background:unitColor(type, analysis.codecKind)}}/></div><b>{count}</b></div>)}</section>
-          {analysis.sps && <section className="stream-card"><div className="section-title"><div><span>06</span><h3>{localizeParameterSetName(analysis.parameterSetName, locale)}</h3></div></div><dl><div><dt>profile_idc</dt><dd>{analysis.sps.profileIdc}</dd></div><div><dt>level</dt><dd>{analysis.sps.level}</dd></div><div><dt>chroma_format</dt><dd>{analysis.sps.chromaFormat}</dd></div><div><dt>bit_depth</dt><dd>{analysis.sps.bitDepth} bit</dd></div><div><dt>coding_block</dt><dd>{analysis.blockSize} × {analysis.blockSize}</dd></div></dl></section>}
+          {intraModeDistribution && <section className="intra-distribution-card"><div className="section-title"><div><span>05</span><h3>{copy.intraModeDistribution}</h3></div><small>{intraModeDistribution.sampledCount.toLocaleString(locale === "en" ? "en-US" : "zh-CN")} {copy.intraModeSamples}{intraModeDistribution.limited ? ` · ${copy.distributionLimited}` : ""}</small></div>{intraModeDistribution.items.map(item => <div className="mode-bar-row" key={item.key}><span title={item.name}>{item.name}</span><div><i style={{width:`${Math.max(4, item.count / (intraModeDistribution.items[0]?.count ?? 1) * 100)}%`}} /></div><b>{item.count.toLocaleString(locale === "en" ? "en-US" : "zh-CN")}</b></div>)}</section>}
         </aside>
       </div>
     </div>}
