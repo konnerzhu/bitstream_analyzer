@@ -49,8 +49,10 @@ button { cursor:pointer; }
 .frame-controls button:disabled { opacity:.35; cursor:not-allowed; }
 .frame-controls input { width:100%; accent-color:var(--orange); }
 .macroblock-toolbar { display:flex; align-items:center; justify-content:space-between; gap:16px; margin-top:13px; padding-top:13px; border-top:1px solid var(--line); }
+.overlay-toggles { display:flex; flex-wrap:wrap; gap:8px; }
 .macroblock-toolbar button { display:flex; align-items:center; gap:7px; min-height:32px; padding:0 11px; border:1px solid var(--ink); background:var(--paper); font:bold 10px monospace; white-space:nowrap; }
 .macroblock-toolbar button.active { background:var(--acid); }
+.macroblock-toolbar button:disabled { cursor:not-allowed; opacity:.4; }
 .macroblock-toolbar button i { width:7px; height:7px; border-radius:50%; background:var(--ink); }
 .macroblock-toolbar>span { font:10px monospace; opacity:.58; text-align:right; }
 .macroblock-info { display:grid; grid-template-columns:repeat(auto-fit,minmax(135px,1fr)); margin-top:12px; border:1px solid var(--ink); }

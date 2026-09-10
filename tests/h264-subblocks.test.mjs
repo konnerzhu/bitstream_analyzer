@@ -30,8 +30,54 @@ test("parses every macroblock in a CAVLC IDR picture", async () => {
     assert.equal(result.macroblocks.length, 16);
     assert.ok(result.macroblocks.every(macroblock => macroblock?.typeName.startsWith("I_")));
     assert.ok(result.macroblocks.every(macroblock => macroblock.partitions.length >= 1));
+    assert.ok(result.macroblocks.every(macroblock => macroblock.intraModes?.length >= 1));
+    assert.ok(result.macroblocks.flatMap(macroblock => macroblock.intraModes).every(mode => mode.mode >= 0 && mode.mode <= 8));
   } finally {
     await parser.dispose();
   }
 });
 
+test("maps H.264 intra modes to their nominal direction paths", async () => {
+  const parser = await loadParser();
+  try {
+    const expected4x4 = [
+      [0, "Vertical", 90],
+      [1, "Horizontal", 0],
+      [2, "DC", undefined],
+      [3, "Diagonal down-left", 135],
+      [4, "Diagonal down-right", 45],
+      [5, "Vertical-right", 67.5],
+      [6, "Horizontal-down", 22.5],
+      [7, "Vertical-left", 112.5],
+      [8, "Horizontal-up", 337.5],
+    ];
+    for (const [mode, name, angle] of expected4x4) {
+      const info = parser.subblocks.getH264IntraModeInfo(mode, 4);
+      assert.equal(info.name, name);
+      assert.equal(info.directional, angle !== undefined);
+      assert.equal(info.angle, angle);
+    }
+
+    assert.deepEqual(parser.subblocks.getH264IntraModeInfo(0, 16), { name: "Vertical", directional: true, angle: 90 });
+    assert.deepEqual(parser.subblocks.getH264IntraModeInfo(1, 16), { name: "Horizontal", directional: true, angle: 0 });
+    assert.deepEqual(parser.subblocks.getH264IntraModeInfo(2, 16), { name: "DC", directional: false });
+    assert.deepEqual(parser.subblocks.getH264IntraModeInfo(3, 16), { name: "Plane", directional: false });
+    assert.equal(parser.subblocks.getH264IntraModeInfo(9, 4), undefined);
+  } finally {
+    await parser.dispose();
+  }
+});
+
+test("reconstructs H.264 rem_intra_pred_mode around the predicted mode", async () => {
+  const parser = await loadParser();
+  try {
+    assert.equal(parser.subblocks.decodeH264IntraMode(5, true), 5);
+    assert.equal(parser.subblocks.decodeH264IntraMode(5, false, 4), 4);
+    assert.equal(parser.subblocks.decodeH264IntraMode(5, false, 5), 6);
+    assert.equal(parser.subblocks.decodeH264IntraMode(0, false, 7), 8);
+    assert.throws(() => parser.subblocks.decodeH264IntraMode(9, true), /无效预测帧内模式/);
+    assert.throws(() => parser.subblocks.decodeH264IntraMode(2, false, 8), /无效 rem_intra_pred_mode/);
+  } finally {
+    await parser.dispose();
+  }
+});

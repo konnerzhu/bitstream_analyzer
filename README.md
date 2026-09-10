@@ -34,7 +34,7 @@ Drop in an Annex-B NAL stream or a low-overhead AV1 OBU stream and BitScope pars
 | **02** | NAL / OBU timeline | Codec-specific type, layer, temporal ID, byte offset, payload size, and header size |
 | **03** | Decoded picture | Frame-by-frame output synchronized with the selected access unit |
 | **04** | Coding-block view | Codec-aware Macroblock, CTU, or Superblock grid with click selection and coordinates |
-| **05** | Entropy-decoded blocks | H.264 CAVLC macroblock partitions plus AV1 IVF leaf-block, prediction, transform, and skip overlays |
+| **05** | Entropy-decoded blocks | H.264 CAVLC macroblock partitions/intra directions plus AV1 IVF leaf-block, intra-mode direction, transform, and skip overlays |
 | **06** | Syntax details | Parsed sequence fields and unit headers alongside a bounded hexadecimal view |
 | **07** | Private by design | Analysis stays inside the browser; the source stream is never uploaded |
 
@@ -58,10 +58,10 @@ The current input limit is **200 MB** per file. Parsing is capped at **100,000 N
 
 | Codec | Current coverage |
 |---|---|
-| H.264 / AVC | SPS profile, level, dimensions, timing, chroma/bit depth; NAL and slice summary; CAVLC I/P macroblock type, CBP, ΔQP, and partition geometry |
+| H.264 / AVC | SPS profile, level, dimensions, timing, chroma/bit depth; NAL and slice summary; CAVLC I/P macroblock type, CBP, ΔQP, partition geometry, and decoded Intra 4×4/8×8/16×16 prediction modes |
 | H.265 / HEVC | VPS/SPS/PPS detection, profile, level, dimensions, chroma/bit depth, layer/temporal IDs, IRAP frames, and SPS-derived CTU size |
 | H.266 / VVC | NAL type, VPS/SPS/PPS/APS/PH/SEI recognition, layer/temporal IDs, random-access units, and declared CTU size |
-| AV1 | OBU framing, Sequence Header metadata, frame/tile units, 64/128 Superblocks, and IVF entropy-decoded leaf block size/mode/transform/skip |
+| AV1 | OBU framing, Sequence Header metadata, frame/tile units, 64/128 Superblocks, and IVF entropy-decoded leaf block size, intra-mode name/nominal direction, transform, and skip state |
 | Pictures | WebCodecs decoding for AVC, HEVC, or AV1 when that codec/configuration is available in the browser; VVC parsing only |
 
 > [!NOTE]
@@ -92,7 +92,7 @@ The English interface is available at [`/`](http://localhost:3000/), and the Sim
 1. Load an AVC/HEVC/VVC Annex-B stream, an AV1 OBU stream, or an AV1 IVF file.
 2. Select a frame, NAL unit, or OBU from the timeline/list.
 3. Inspect the synchronized decoded picture and syntax panel.
-4. Enable the coding-block overlay and click a block to view its address, coordinates, bounds, and available slice association.
+4. Enable the coding-block overlay and click a block to view its address, coordinates, bounds, and available slice association. For supported H.264 CAVLC streams and AV1 IVF, use **Intra modes** to independently show or hide nominal-direction arrows.
 5. Scroll the mouse wheel over the picture to zoom from **50% to 800%**; use **Fit** to return to the available viewport.
 
 If WebCodecs or a matching browser decoder is unavailable, bitstream parsing still works, but decoded-picture display is disabled. H.266/VVC currently has no WebCodecs decoding path.
@@ -126,8 +126,9 @@ The analyzer is written in TypeScript with React 19 and vinext. Parsing and deco
 
 - Raw Annex-B NAL streams, low-overhead AV1 OBU streams, and AV1 IVF are supported; general-purpose container demuxing is not included.
 - Decoded output depends on the browser, operating system, and available AVC/HEVC/AV1 codec implementation; VVC is analysis-only.
-- H.264 subblock parsing currently covers progressive 8-bit 4:2:0 CAVLC I/P slices. CABAC, B slices, FMO, interlaced/MBAFF pictures, motion-vector values, and residual coefficient values are reported as unsupported rather than inferred.
+- H.264 subblock parsing currently covers progressive 8-bit 4:2:0 CAVLC I/P slices, including luma intra prediction modes. DC and Plane are shown as non-directional; CABAC, B slices, FMO, interlaced/MBAFF pictures, motion-vector values, and residual coefficient values are reported as unsupported rather than inferred.
 - AV1 subblock inspection currently requires an IVF container. Raw low-overhead OBU streams continue to show their top-level Superblock grid because the bundled inspector consumes IVF.
+- AV1 directional arrows show the mode's nominal angle. The bundled inspection data does not currently expose each block's optional angle delta.
 - AV1 inspection runs in a dedicated Worker and is bounded to 64 MB input, 20 seconds per selected frame, 32 MB JSON output, and validated matrix/block counts.
 - HEVC and VVC still show their top-level coding-unit grid without entropy-decoded subpartitions.
 - Interlaced streams and less common parameter-set combinations may expose fields that are parsed but not visualized.

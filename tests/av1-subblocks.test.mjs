@@ -30,8 +30,8 @@ function frameFixture() {
     ],
     transformSizeMap: { TX_8X8: 1, TX_16X16: 2 },
     transformSize: Array.from({ length: 4 }, () => [2, 2, 2, 2, 1, 1, 1, 1]),
-    modeMap: { DC_PRED: 0, PAETH_PRED: 12 },
-    mode: Array.from({ length: 4 }, () => [0, 0, 0, 0, 12, 12, 12, 12]),
+    modeMap: { DC_PRED: 0, D45_PRED: 3, PAETH_PRED: 12 },
+    mode: Array.from({ length: 4 }, () => [0, 0, 0, 0, 12, 12, 3, 3]),
     skipMap: { NO_SKIP: 0, SKIP: 1 },
     skip: Array.from({ length: 4 }, () => [0, 0, 0, 0, 1, 1, 1, 1]),
     tileCols: [0, 4, 8],
@@ -54,10 +54,32 @@ test("deduplicates AV1 MI maps into entropy-decoded leaf blocks", async () => {
     ]);
     assert.equal(result.blocks[0].mode, "DC_PRED");
     assert.equal(result.blocks[1].mode, "PAETH_PRED");
+    assert.equal(result.blocks[2].mode, "D45_PRED");
+    assert.deepEqual(result.blocks[0].intraMode, { name: "DC", directional: false });
+    assert.deepEqual(result.blocks[2].intraMode, { name: "Diagonal 45°", directional: true, nominalAngle: 45 });
     assert.equal(result.blocks[1].transformSize, "8X8");
     assert.equal(result.blocks[1].skipped, true);
     assert.equal(result.blocks[1].tileColumn, 1);
     assert.equal(result.baseQIndex, 217);
+  } finally {
+    await parser.dispose();
+  }
+});
+
+test("classifies AV1 intra modes and preserves inter modes", async () => {
+  const parser = await loadConverter();
+  try {
+    for (const [mode, angle] of [["D45_PRED", 45], ["D67_PRED", 67], ["V_PRED", 90], ["D113_PRED", 113], ["D135_PRED", 135], ["D157_PRED", 157], ["H_PRED", 180], ["D203_PRED", 203]]) {
+      const info = parser.converter.getAv1IntraModeInfo(mode);
+      assert.equal(info.directional, true);
+      assert.equal(info.nominalAngle, angle);
+    }
+    for (const mode of ["DC_PRED", "SMOOTH_PRED", "SMOOTH_V_PRED", "SMOOTH_H_PRED", "PAETH_PRED", "CFL_PRED"]) {
+      const info = parser.converter.getAv1IntraModeInfo(mode);
+      assert.equal(info.directional, false);
+      assert.equal(info.nominalAngle, undefined);
+    }
+    assert.equal(parser.converter.getAv1IntraModeInfo("NEARESTMV"), undefined);
   } finally {
     await parser.dispose();
   }

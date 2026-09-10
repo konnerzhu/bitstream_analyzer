@@ -8,6 +8,34 @@ const INSPECTION_TIMEOUT_MS = 20_000;
 type InspectionMap = Record<string, number>;
 type InspectionFrame = Record<string, unknown>;
 
+export type Av1IntraModeInfo = Readonly<{
+  name: string;
+  directional: boolean;
+  nominalAngle?: number;
+}>;
+
+const AV1_INTRA_MODES = new Map<string, Av1IntraModeInfo>([
+  ["DC_PRED", { name: "DC", directional: false }],
+  ["V_PRED", { name: "Vertical", directional: true, nominalAngle: 90 }],
+  ["H_PRED", { name: "Horizontal", directional: true, nominalAngle: 180 }],
+  ["D45_PRED", { name: "Diagonal 45°", directional: true, nominalAngle: 45 }],
+  ["D135_PRED", { name: "Diagonal 135°", directional: true, nominalAngle: 135 }],
+  ["D113_PRED", { name: "Diagonal 113°", directional: true, nominalAngle: 113 }],
+  ["D157_PRED", { name: "Diagonal 157°", directional: true, nominalAngle: 157 }],
+  ["D203_PRED", { name: "Diagonal 203°", directional: true, nominalAngle: 203 }],
+  ["D67_PRED", { name: "Diagonal 67°", directional: true, nominalAngle: 67 }],
+  ["SMOOTH_PRED", { name: "Smooth", directional: false }],
+  ["SMOOTH_V_PRED", { name: "Smooth vertical", directional: false }],
+  ["SMOOTH_H_PRED", { name: "Smooth horizontal", directional: false }],
+  ["PAETH_PRED", { name: "Paeth", directional: false }],
+  ["CFL_PRED", { name: "Chroma from luma", directional: false }],
+  ["UV_CFL_PRED", { name: "Chroma from luma", directional: false }],
+]);
+
+export function getAv1IntraModeInfo(mode: string): Av1IntraModeInfo | undefined {
+  return AV1_INTRA_MODES.get(mode);
+}
+
 export type Av1LeafBlock = {
   id: number;
   x: number;
@@ -16,6 +44,7 @@ export type Av1LeafBlock = {
   height: number;
   sizeName: string;
   mode: string;
+  intraMode?: Av1IntraModeInfo;
   transformSize: string;
   skipped: boolean;
   skipName: string;
@@ -141,6 +170,7 @@ export function convertAv1InspectionFrame(raw: unknown, analysis: Analysis): Av1
       const rawMode = modeNames.get(mode[row][column]);
       const rawTransform = transformNames.get(transformSize[row][column]);
       const rawSkip = skipNames.get(skip[row][column]);
+      const decodedMode = rawMode ?? `MODE_${mode[row][column]}`;
       blocks.push({
         id: blocks.length,
         x,
@@ -148,7 +178,8 @@ export function convertAv1InspectionFrame(raw: unknown, analysis: Analysis): Av1
         width: Math.min(size.width, pictureWidth - x),
         height: Math.min(size.height, pictureHeight - y),
         sizeName: sizeName.replace(/^BLOCK_/, ""),
-        mode: rawMode ?? `MODE_${mode[row][column]}`,
+        mode: decodedMode,
+        intraMode: getAv1IntraModeInfo(decodedMode),
         transformSize: (rawTransform ?? `TX_${transformSize[row][column]}`).replace(/^TX_/, ""),
         skipped: rawSkip === "SKIP" || skip[row][column] === 1,
         skipName: rawSkip ?? `SKIP_${skip[row][column]}`,

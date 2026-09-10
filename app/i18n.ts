@@ -78,6 +78,13 @@ const english = {
   macroblockSyntax: "Macroblock syntax",
   noCavlc: "No CAVLC result is available for this address",
   av1BlockSyntax: "AV1 block syntax",
+  intraPrediction: "Intra prediction",
+  intraModes: "Intra modes",
+  predictionBlocks: "prediction blocks",
+  nominalDirection: "Nominal direction",
+  nonDirectional: "Non-directional",
+  interPrediction: "Inter prediction",
+  directionOverlay: "orange arrows show nominal intra directions",
   decodingWithLibaom: "Entropy-decoding through libaom inspection",
   noResult: "No inspection result is available",
   decoderInitializing: "Initializing decoder…",
@@ -193,6 +200,13 @@ const simplifiedChinese: UiCopy = {
   macroblockSyntax: "宏块语法",
   noCavlc: "该地址没有可用的 CAVLC 解析结果",
   av1BlockSyntax: "AV1 块语法",
+  intraPrediction: "帧内预测",
+  intraModes: "帧内模式",
+  predictionBlocks: "个预测块",
+  nominalDirection: "标称方向",
+  nonDirectional: "非方向模式",
+  interPrediction: "帧间预测",
+  directionOverlay: "橙色箭头表示帧内预测标称方向",
   decodingWithLibaom: "正在通过 libaom inspection 熵解码",
   noResult: "无可用解析结果",
   decoderInitializing: "正在初始化解码器…",
@@ -271,4 +285,43 @@ export function localizeParameterSetName(name: string, locale: Locale) {
   if (name === "HEVC SPS 参数") return "HEVC SPS parameters";
   if (name === "VVC 参数集") return "VVC parameter sets";
   return name;
+}
+
+const simplifiedChineseAv1IntraModes = new Map<string, string>([
+  ["DC_PRED", "DC"],
+  ["V_PRED", "垂直"],
+  ["H_PRED", "水平"],
+  ["D45_PRED", "45° 对角"],
+  ["D135_PRED", "135° 对角"],
+  ["D113_PRED", "113° 对角"],
+  ["D157_PRED", "157° 对角"],
+  ["D203_PRED", "203° 对角"],
+  ["D67_PRED", "67° 对角"],
+  ["SMOOTH_PRED", "平滑"],
+  ["SMOOTH_V_PRED", "垂直平滑"],
+  ["SMOOTH_H_PRED", "水平平滑"],
+  ["PAETH_PRED", "Paeth"],
+  ["CFL_PRED", "色度取自亮度"],
+  ["UV_CFL_PRED", "色度取自亮度"],
+]);
+
+export function localizeAv1IntraModeName(mode: string, fallback: string, locale: Locale) {
+  return locale === "zh-CN" ? simplifiedChineseAv1IntraModes.get(mode) ?? fallback : fallback;
+}
+
+const simplifiedChineseH264IntraModes = new Map<string, string>([
+  ["Vertical", "垂直"],
+  ["Horizontal", "水平"],
+  ["DC", "DC"],
+  ["Plane", "平面"],
+  ["Diagonal down-left", "左下对角"],
+  ["Diagonal down-right", "右下对角"],
+  ["Vertical-right", "垂直偏右"],
+  ["Horizontal-down", "水平偏下"],
+  ["Vertical-left", "垂直偏左"],
+  ["Horizontal-up", "水平偏上"],
+]);
+
+export function localizeH264IntraModeName(name: string, locale: Locale) {
+  return locale === "zh-CN" ? simplifiedChineseH264IntraModes.get(name) ?? name : name;
 }

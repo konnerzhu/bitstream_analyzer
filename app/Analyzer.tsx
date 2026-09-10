@@ -3,8 +3,8 @@
 import { ChangeEvent, DragEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Analysis, CodecKind, NalUnit, SUPPORTED_EXTENSIONS, analyzeBitstream, formatBytes, unitColor } from "./codecs";
 import { analyzeH264Subblocks } from "./h264-subblocks";
-import { Av1SubblockAnalysis, inspectAv1Subblocks } from "./av1-subblocks";
-import { Locale, getCopy, localizeBlockName, localizeParameterSetName, localizeTypeName } from "./i18n";
+import { Av1LeafBlock, Av1SubblockAnalysis, inspectAv1Subblocks } from "./av1-subblocks";
+import { Locale, getCopy, localizeAv1IntraModeName, localizeBlockName, localizeH264IntraModeName, localizeParameterSetName, localizeTypeName } from "./i18n";
 
 const MAX_FILE_SIZE = 200 * 1024 * 1024;
 const ACCEPTED_FILES = ".h264,.264,.avc,.h265,.265,.hevc,.h266,.266,.vvc,.av1,.obu,.ivf,video/h264,video/h265,video/av1";
@@ -34,6 +34,34 @@ function Stat({ label, value, note }: { label: string; value: string; note?: str
 
 function NalBadge({ unit, codec }: { unit: NalUnit; codec: CodecKind }) { return <span className="nal-badge" style={{ background: unitColor(unit.type, codec) }}>{codec === "av1" ? "O" : "T"}{unit.type}</span>; }
 
+function addDirectionPath(context: CanvasRenderingContext2D, x: number, y: number, width: number, height: number, angle: number | undefined, minimumSize: number) {
+  if (angle === undefined || Math.min(width, height) < minimumSize) return false;
+  const radians = angle * Math.PI / 180;
+  const directionX = Math.cos(radians);
+  const directionY = Math.sin(radians);
+  const centerX = x + width / 2;
+  const centerY = y + height / 2;
+  const halfLength = Math.max(minimumSize === 4 ? 1.2 : 2.5, Math.min(width, height) * .3);
+  const startX = centerX - directionX * halfLength;
+  const startY = centerY - directionY * halfLength;
+  const endX = centerX + directionX * halfLength;
+  const endY = centerY + directionY * halfLength;
+  const arrowLength = Math.min(minimumSize === 4 ? 1.8 : 3.5, halfLength * .45);
+  const reverse = radians + Math.PI;
+
+  context.moveTo(startX, startY);
+  context.lineTo(endX, endY);
+  context.moveTo(endX, endY);
+  context.lineTo(endX + Math.cos(reverse - Math.PI / 6) * arrowLength, endY + Math.sin(reverse - Math.PI / 6) * arrowLength);
+  context.moveTo(endX, endY);
+  context.lineTo(endX + Math.cos(reverse + Math.PI / 6) * arrowLength, endY + Math.sin(reverse + Math.PI / 6) * arrowLength);
+  return true;
+}
+
+function addAv1DirectionPath(context: CanvasRenderingContext2D, block: Av1LeafBlock) {
+  return addDirectionPath(context, block.x, block.y, block.width, block.height, block.intraMode?.nominalAngle, 8);
+}
+
 function DecodedPreview({ bytes, analysis, selected, onSelect, locale }: { bytes: Uint8Array; analysis: Analysis; selected: NalUnit | null; onSelect: (unit: NalUnit) => void; locale: Locale }) {
   const copy = getCopy(locale);
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -42,6 +70,7 @@ function DecodedPreview({ bytes, analysis, selected, onSelect, locale }: { bytes
   const [state, setState] = useState<"decoding" | "ready" | "unsupported" | "error">("decoding");
   const [message, setMessage] = useState(copy.decoderInitializing);
   const [showMacroblocks, setShowMacroblocks] = useState(true);
+  const [showIntraModes, setShowIntraModes] = useState(true);
   const [selectedMacroblock, setSelectedMacroblock] = useState(0);
   const [selectedAv1Block, setSelectedAv1Block] = useState(0);
   const [av1Inspection, setAv1Inspection] = useState<{ source: Uint8Array; framePosition: number; result: Av1SubblockAnalysis } | null>(null);
@@ -68,7 +97,15 @@ function DecodedPreview({ bytes, analysis, selected, onSelect, locale }: { bytes
   const slicePosition = Math.max(0, frameSlices.findLastIndex(unit => (unit.firstMb ?? 0) <= macroblockAddress));
   const macroblockSlice = frameSlices[slicePosition];
   const parsedMacroblock = h264Subblocks?.macroblocks[macroblockAddress];
+  const h264IntraModesAvailable = useMemo(() => Boolean(h264Subblocks?.macroblocks.some(macroblock => macroblock?.intraModes?.length)), [h264Subblocks]);
+  const intraModesAvailable = analysis.codecKind === "av1" ? av1Subblocks?.status === "ready" : analysis.codecKind === "h264" ? h264IntraModesAvailable : false;
+  const h264IntraModeSummary = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const mode of parsedMacroblock?.intraModes ?? []) counts.set(mode.name, (counts.get(mode.name) ?? 0) + 1);
+    return [...counts.entries()].sort((left, right) => right[1] - left[1]).slice(0, 4).map(([name, count]) => `${localizeH264IntraModeName(name, locale)} ×${count}`).join(" · ");
+  }, [locale, parsedMacroblock]);
   const av1LeafBlock = av1Subblocks?.status === "ready" ? av1Subblocks.blocks[selectedAv1Block] : undefined;
+  const av1IntraModeName = av1LeafBlock?.intraMode ? localizeAv1IntraModeName(av1LeafBlock.mode, av1LeafBlock.intraMode.name, locale) : undefined;
   const blockUnit = analysis.codecKind === "av1" ? target : macroblockSlice;
   const sliceEnd = Math.min(macroblockCount - 1, (frameSlices[slicePosition + 1]?.firstMb ?? macroblockCount) - 1);
   const blockName = localizeBlockName(analysis.blockName, locale);
@@ -131,6 +168,25 @@ function DecodedPreview({ bytes, analysis, selected, onSelect, locale }: { bytes
       }
       context.lineWidth = Math.max(.65, sps.width / 2400);
       context.strokeStyle = "rgba(63,224,255,.8)"; context.stroke();
+      if (showIntraModes) {
+        context.beginPath();
+        let modeBudget = 50_000;
+        let macroblockScanBudget = 100_000;
+        for (const macroblock of h264Subblocks.macroblocks) {
+          if (modeBudget <= 0 || macroblockScanBudget-- <= 0) break;
+          if (!macroblock?.intraModes) continue;
+          const originX = (macroblock.address % macroblockColumns) * 16;
+          const originY = Math.floor(macroblock.address / macroblockColumns) * 16;
+          for (const mode of macroblock.intraModes) {
+            if (modeBudget <= 0) break;
+            if (addDirectionPath(context, originX + mode.x, originY + mode.y, mode.width, mode.height, mode.angle, 4)) modeBudget -= 1;
+          }
+        }
+        context.lineWidth = Math.max(.8, sps.width / 1800);
+        context.lineCap = "round";
+        context.lineJoin = "round";
+        context.strokeStyle = "rgba(255,107,53,.94)"; context.stroke();
+      }
     }
     if (analysis.codecKind === "av1" && av1Subblocks?.status === "ready") {
       context.beginPath();
@@ -141,6 +197,19 @@ function DecodedPreview({ bytes, analysis, selected, onSelect, locale }: { bytes
       }
       context.lineWidth = Math.max(.65, sps.width / 2400);
       context.strokeStyle = "rgba(63,224,255,.82)"; context.stroke();
+      if (showIntraModes) {
+        context.beginPath();
+        let directionBudget = 50_000;
+        let directionScanBudget = 100_000;
+        for (const block of av1Subblocks.blocks) {
+          if (directionBudget <= 0 || directionScanBudget-- <= 0) break;
+          if (addAv1DirectionPath(context, block)) directionBudget -= 1;
+        }
+        context.lineWidth = Math.max(.9, sps.width / 1800);
+        context.lineCap = "round";
+        context.lineJoin = "round";
+        context.strokeStyle = "rgba(255,107,53,.94)"; context.stroke();
+      }
     }
     const selectedX = av1LeafBlock?.x ?? macroblockColumn * blockSize;
     const selectedY = av1LeafBlock?.y ?? macroblockRow * blockSize;
@@ -155,7 +224,7 @@ function DecodedPreview({ bytes, analysis, selected, onSelect, locale }: { bytes
       for (const partition of parsedMacroblock.partitions) context.rect(macroblockColumn * 16 + partition.x + 1, macroblockRow * 16 + partition.y + 1, Math.max(0, partition.width - 2), Math.max(0, partition.height - 2));
       context.lineWidth = Math.max(1.5, sps.width / 800); context.strokeStyle = "#3fe0ff"; context.stroke();
     }
-  }, [analysis.codecKind, analysis.sps, av1LeafBlock, av1Subblocks, blockSize, h264Subblocks, macroblockColumn, macroblockColumns, macroblockRow, parsedMacroblock, showMacroblocks]);
+  }, [analysis.codecKind, analysis.sps, av1LeafBlock, av1Subblocks, blockSize, h264Subblocks, macroblockColumn, macroblockColumns, macroblockRow, parsedMacroblock, showIntraModes, showMacroblocks]);
 
   const selectMacroblockAt = (clientX: number, clientY: number) => {
     const overlay = macroblockCanvas.current;
@@ -274,7 +343,7 @@ function DecodedPreview({ bytes, analysis, selected, onSelect, locale }: { bytes
       <input type="range" min="0" max={Math.max(0, frames.length - 1)} value={framePosition} onChange={event => onSelect(frames[Number(event.target.value)])} aria-label={copy.selectFrame} />
       <button disabled={framePosition >= frames.length - 1} onClick={() => onSelect(frames[framePosition + 1])}>{copy.nextFrame}</button>
     </div>
-    <div className="macroblock-toolbar"><button className={showMacroblocks ? "active" : ""} onClick={() => setShowMacroblocks(value => !value)}><i />{blockName} {copy.grid} {showMacroblocks ? "ON" : "OFF"}</button><span>{analysis.codecKind === "h264" && h264Subblocks ? `${h264Subblocks.entropyMode ?? "H.264"} · ${h264StatusMessage}` : analysis.codecKind === "av1" ? (av1SubblocksLoading ? copy.entropyDecodingAv1 : av1StatusMessage) : `${macroblockColumns} × ${macroblockRows} ${blockSize}×${blockSize} ${copy.lumaBlocks} · ${copy.clickToSelect}`}</span></div>
+    <div className="macroblock-toolbar"><div className="overlay-toggles"><button className={showMacroblocks ? "active" : ""} aria-pressed={showMacroblocks} onClick={() => setShowMacroblocks(value => !value)}><i />{blockName} {copy.grid} {showMacroblocks ? "ON" : "OFF"}</button>{(analysis.codecKind === "av1" || analysis.codecKind === "h264") && <button className={showIntraModes ? "active" : ""} aria-pressed={showIntraModes} disabled={!showMacroblocks || !intraModesAvailable} onClick={() => setShowIntraModes(value => !value)}><i />{copy.intraModes} {showIntraModes ? "ON" : "OFF"}</button>}</div><span>{analysis.codecKind === "h264" && h264Subblocks ? `${h264Subblocks.entropyMode ?? "H.264"} · ${h264StatusMessage}${showMacroblocks && showIntraModes && h264IntraModesAvailable ? ` · ${copy.directionOverlay}` : ""}` : analysis.codecKind === "av1" ? (av1SubblocksLoading ? copy.entropyDecodingAv1 : `${av1StatusMessage}${showMacroblocks && showIntraModes && av1Subblocks?.status === "ready" ? ` · ${copy.directionOverlay}` : ""}`) : `${macroblockColumns} × ${macroblockRows} ${blockSize}×${blockSize} ${copy.lumaBlocks} · ${copy.clickToSelect}`}</span></div>
     {showMacroblocks && macroblockCount > 0 && <div className="macroblock-info">
       <div><span>{blockName} {copy.address}</span><strong>#{macroblockAddress}</strong><small>{copy.rasterOrder}</small></div>
       <div><span>{copy.position}</span><strong>{av1LeafBlock ? `MI R${av1LeafBlock.y / 4} / C${av1LeafBlock.x / 4}` : `R${macroblockRow} / C${macroblockColumn}`}</strong><small>{av1LeafBlock ? `x ${av1LeafBlock.x}–${av1LeafBlock.x + av1LeafBlock.width - 1} · y ${av1LeafBlock.y}–${av1LeafBlock.y + av1LeafBlock.height - 1}` : `x ${macroblockColumn * blockSize}–${Math.min((macroblockColumn + 1) * blockSize - 1, (analysis.sps?.width ?? 1) - 1)} · y ${macroblockRow * blockSize}–${Math.min((macroblockRow + 1) * blockSize - 1, (analysis.sps?.height ?? 1) - 1)}`}</small></div>
@@ -283,7 +352,8 @@ function DecodedPreview({ bytes, analysis, selected, onSelect, locale }: { bytes
       <div><span>{analysis.unitName} {copy.unit}</span><strong>{blockUnit ? `#${blockUnit.index} · ${analysis.codecKind === "av1" ? "O" : "T"}${blockUnit.type}` : "—"}</strong><small>{blockUnit ? `${copy.layer} ${blockUnit.layerId ?? 0} · 0x${blockUnit.offset.toString(16)}` : "—"}</small></div>
       <div><span>{copy.chromaCoverage}</span><strong>{analysis.sps?.chromaFormat ?? "—"}</strong><small>{analysis.sps?.chromaFormat === "4:2:0" ? copy.chroma420 : copy.chromaFromSps}</small></div>
       {analysis.codecKind === "h264" && <div><span>{copy.macroblockSyntax}</span><strong>{parsedMacroblock ? `${parsedMacroblock.prediction}${parsedMacroblock.skipped ? " · SKIP" : ""}` : "—"}</strong><small>{parsedMacroblock ? `mb_type ${parsedMacroblock.rawType ?? "skip"} · CBP ${parsedMacroblock.codedBlockPattern ?? 0}${parsedMacroblock.qpDelta !== undefined ? ` · ΔQP ${parsedMacroblock.qpDelta}` : ""}` : copy.noCavlc}</small></div>}
-      {analysis.codecKind === "av1" && <div><span>{copy.av1BlockSyntax}</span><strong>{av1LeafBlock ? `${av1LeafBlock.mode}${av1LeafBlock.skipped ? " · SKIP" : ""}` : "—"}</strong><small>{av1LeafBlock ? `TX ${av1LeafBlock.transformSize} · base_q_idx ${av1Subblocks?.baseQIndex ?? "—"} · frame_type ${av1Subblocks?.frameType ?? "—"}` : av1SubblocksLoading ? copy.decodingWithLibaom : av1StatusMessage || copy.noResult}</small></div>}
+      {analysis.codecKind === "h264" && parsedMacroblock?.intraModes?.length && <div><span>{copy.intraPrediction}</span><strong>{h264IntraModeSummary}</strong><small>{parsedMacroblock.intraModes.length} {copy.predictionBlocks} · {parsedMacroblock.typeName}</small></div>}
+      {analysis.codecKind === "av1" && <div><span>{av1LeafBlock?.intraMode ? copy.intraPrediction : copy.av1BlockSyntax}</span><strong>{av1LeafBlock ? `${av1IntraModeName ?? `${av1LeafBlock.mode} · ${copy.interPrediction}`}${av1LeafBlock.intraMode ? ` · ${av1LeafBlock.intraMode.directional ? `${copy.nominalDirection} ${av1LeafBlock.intraMode.nominalAngle}°` : copy.nonDirectional}` : ""}${av1LeafBlock.skipped ? " · SKIP" : ""}` : "—"}</strong><small>{av1LeafBlock ? `mode ${av1LeafBlock.mode} · TX ${av1LeafBlock.transformSize} · base_q_idx ${av1Subblocks?.baseQIndex ?? "—"} · frame_type ${av1Subblocks?.frameType ?? "—"}` : av1SubblocksLoading ? copy.decodingWithLibaom : av1StatusMessage || copy.noResult}</small></div>}
     </div>}
   </section>;
 }

@@ -34,7 +34,7 @@ BitScope 是一款可视化 H.264/AVC、H.265/HEVC、H.266/VVC 和 AV1 裸码流
 | **02** | NAL / OBU 时间线 | 编码相关类型、层级、Temporal ID、字节偏移、负载和头部大小 |
 | **03** | 解码画面 | 逐帧显示，并与当前访问单元保持同步 |
 | **04** | 编码块视图 | 随编码格式切换宏块、CTU 或 Superblock 网格，支持点击选择和坐标查看 |
-| **05** | H.264 子块 | 显示 CAVLC 宏块类型，以及 16×16、16×8、8×16、8×8、8×4、4×8、4×4 真实分区 |
+| **05** | 熵解码块 | 显示 H.264 CAVLC 宏块真实分区/帧内方向，以及 AV1 IVF 叶子块、帧内模式标称方向、变换尺寸和 Skip 状态 |
 | **06** | 语法详情 | 序列参数和单元头字段，以及大小受控的十六进制数据视图 |
 | **07** | 本地隐私 | 所有分析均在浏览器内完成，原始码流不会上传 |
 
@@ -58,10 +58,10 @@ BitScope 是一款可视化 H.264/AVC、H.265/HEVC、H.266/VVC 和 AV1 裸码流
 
 | 编码格式 | 当前支持内容 |
 |---|---|
-| H.264 / AVC | SPS Profile、Level、尺寸、帧率、色度/位深；NAL 和 Slice 摘要；CAVLC I/P 宏块类型、CBP、ΔQP 和真实分区 |
+| H.264 / AVC | SPS Profile、Level、尺寸、帧率、色度/位深；NAL 和 Slice 摘要；CAVLC I/P 宏块类型、CBP、ΔQP、真实分区及已解码的 Intra 4×4/8×8/16×16 预测模式 |
 | H.265 / HEVC | VPS/SPS/PPS、Profile、Level、尺寸、色度/位深、层级/Temporal ID、IRAP 帧，以及 SPS 声明的 CTU 大小 |
 | H.266 / VVC | NAL 类型、VPS/SPS/PPS/APS/PH/SEI、层级/Temporal ID、随机访问单元和声明的 CTU 大小 |
-| AV1 | OBU 分帧、Sequence Header 的 Profile/Level/尺寸/色度/位深、帧类型、Tile/元数据，以及 64/128 Superblock |
+| AV1 | OBU 分帧、Sequence Header、帧类型、Tile/元数据、64/128 Superblock，以及 IVF 熵解码叶子块的尺寸、帧内模式名称/标称方向、变换尺寸和 Skip 状态 |
 | 画面 | 浏览器具备对应能力时通过 WebCodecs 解码 AVC、HEVC 或 AV1；VVC 仅进行结构分析 |
 
 > [!NOTE]
@@ -90,7 +90,7 @@ npm run dev
 1. 导入 AVC/HEVC/VVC Annex-B 码流、AV1 OBU 码流或 AV1 IVF 文件。
 2. 在时间线或列表中选择帧、NAL 或 OBU 单元。
 3. 查看同步的解码画面与语法面板。
-4. 开启编码块覆盖层，点击块即可查看地址、坐标、边界及可用的 Slice 归属。
+4. 开启编码块覆盖层，点击块即可查看地址、坐标、边界及可用的 Slice 归属。分析受支持的 H.264 CAVLC 码流或 AV1 IVF 时，可通过 **帧内模式** 按钮单独显示或隐藏标称方向箭头。
 5. 在画面上滚动鼠标滚轮，可在 **50%～800%** 范围内缩放；点击 **Fit** 可恢复为适应窗口大小。
 
 如果浏览器不支持 WebCodecs 或没有对应的解码器，码流解析功能仍然可用，但无法显示解码画面。H.266/VVC 目前没有 WebCodecs 解码路径。
@@ -120,8 +120,11 @@ npm run lint     # 执行静态检查
 
 - 当前支持 Annex-B NAL 裸码流、低开销 AV1 OBU 和 AV1 IVF；尚不包含通用容器解复用。
 - 解码结果取决于浏览器、操作系统以及可用的 AVC/HEVC/AV1 编解码实现；VVC 仅支持分析。
-- H.264 子块当前支持逐行 8-bit 4:2:0 CAVLC I/P Slice；CABAC、B Slice、FMO、隔行/MBAFF、运动矢量数值与残差系数数值会明确显示为不支持，不会通过推测填充。
-- HEVC、VVC 和 AV1 目前仍只显示顶层编码单元网格，尚未熵解码子分区。
+- H.264 子块当前支持逐行 8-bit 4:2:0 CAVLC I/P Slice，包括亮度帧内预测模式；DC 与 Plane 会标记为非方向模式。CABAC、B Slice、FMO、隔行/MBAFF、运动矢量数值与残差系数数值会明确显示为不支持，不会通过推测填充。
+- AV1 子块 inspection 当前要求 IVF 容器；裸 OBU 仍显示顶层 Superblock 网格。
+- AV1 方向箭头表示模式的标称角度；当前随包提供的 inspection 数据尚未输出每个块可选的 angle delta。
+- AV1 inspection 在独立 Worker 中运行，并限制为最大 64 MB 输入、单帧 20 秒、32 MB JSON 结果和受控的矩阵/块数量。
+- HEVC 和 VVC 目前仍只显示顶层编码单元网格，尚未熵解码子分区。
 - 隔行码流和部分少见的参数集组合，可能包含已解析但尚未可视化的字段。
 
 ## 路线图

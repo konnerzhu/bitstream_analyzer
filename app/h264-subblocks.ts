@@ -4,11 +4,17 @@ export type H264Partition = {
   x: number; y: number; width: number; height: number; mode: string;
 };
 
+export type H264IntraMode = {
+  x: number; y: number; width: number; height: number;
+  mode: number; name: string; directional: boolean; angle?: number;
+};
+
 export type H264Macroblock = {
   address: number; sliceUnitIndex: number; sliceType: string; rawType?: number;
   typeName: string; prediction: "Intra" | "Inter" | "Skip" | "PCM";
   skipped: boolean; codedBlockPattern?: number; qpDelta?: number;
   partitions: H264Partition[];
+  intraModes?: H264IntraMode[];
 };
 
 export type H264SubblockAnalysis = {
@@ -61,6 +67,35 @@ const CBP_INTER = [0,16,1,2,4,8,32,3,5,10,12,15,47,7,11,13,14,6,9,31,35,37,42,44
 const BLOCK_X = [0,1,0,1,2,3,2,3,0,1,0,1,2,3,2,3];
 const BLOCK_Y = [0,0,1,1,0,0,1,1,2,2,3,3,2,2,3,3];
 const MAX_MACROBLOCKS = 262_144;
+
+const H264_INTRA_4X4_MODES = new Map<number, Omit<H264IntraMode, "x" | "y" | "width" | "height" | "mode">>([
+  [0, {name:"Vertical",directional:true,angle:90}],
+  [1, {name:"Horizontal",directional:true,angle:0}],
+  [2, {name:"DC",directional:false}],
+  [3, {name:"Diagonal down-left",directional:true,angle:135}],
+  [4, {name:"Diagonal down-right",directional:true,angle:45}],
+  [5, {name:"Vertical-right",directional:true,angle:67.5}],
+  [6, {name:"Horizontal-down",directional:true,angle:22.5}],
+  [7, {name:"Vertical-left",directional:true,angle:112.5}],
+  [8, {name:"Horizontal-up",directional:true,angle:337.5}],
+]);
+const H264_INTRA_16X16_MODES = new Map<number, Omit<H264IntraMode, "x" | "y" | "width" | "height" | "mode">>([
+  [0, {name:"Vertical",directional:true,angle:90}],
+  [1, {name:"Horizontal",directional:true,angle:0}],
+  [2, {name:"DC",directional:false}],
+  [3, {name:"Plane",directional:false}],
+]);
+
+export function getH264IntraModeInfo(mode: number, blockSize: 4 | 8 | 16) {
+  return (blockSize === 16 ? H264_INTRA_16X16_MODES : H264_INTRA_4X4_MODES).get(mode);
+}
+
+export function decodeH264IntraMode(predicted: number, usePredicted: boolean, remaining = 0) {
+  if (!Number.isInteger(predicted) || predicted < 0 || predicted > 8) throw new Error(`无效预测帧内模式 ${predicted}`);
+  if (usePredicted) return predicted;
+  if (!Number.isInteger(remaining) || remaining < 0 || remaining > 7) throw new Error(`无效 rem_intra_pred_mode ${remaining}`);
+  return remaining < predicted ? remaining : remaining + 1;
+}
 
 function readVlc(reader: BitReader, table: VlcValue[]) {
   let code = "";
@@ -226,9 +261,11 @@ class CavlcPicture {
   private readonly luma: Int16Array;
   private readonly chromaU: Int16Array;
   private readonly chromaV: Int16Array;
+  private readonly intraLuma: Int8Array;
   constructor(private readonly widthMbs: number, heightMbs: number) {
     if (widthMbs * heightMbs > MAX_MACROBLOCKS) throw new Error(`图像超过 ${MAX_MACROBLOCKS.toLocaleString()} 个宏块的解析上限`);
     this.luma = new Int16Array(widthMbs * 4 * heightMbs * 4); this.luma.fill(-1);
+    this.intraLuma = new Int8Array(widthMbs * 4 * heightMbs * 4); this.intraLuma.fill(-1);
     this.chromaU = new Int16Array(widthMbs * 2 * heightMbs * 2); this.chromaU.fill(-1);
     this.chromaV = new Int16Array(widthMbs * 2 * heightMbs * 2); this.chromaV.fill(-1);
   }
@@ -238,8 +275,18 @@ class CavlcPicture {
   }
   resetMacroblock(address: number) {
     const mbX = address % this.widthMbs, mbY = Math.floor(address / this.widthMbs), lumaWidth = this.widthMbs * 4, chromaWidth = this.widthMbs * 2;
-    for (let y=0;y<4;y++) for(let x=0;x<4;x++) this.luma[(mbY*4+y)*lumaWidth+mbX*4+x]=0;
+    for (let y=0;y<4;y++) for(let x=0;x<4;x++) { const index=(mbY*4+y)*lumaWidth+mbX*4+x; this.luma[index]=0; this.intraLuma[index]=-1; }
     for (const grid of [this.chromaU,this.chromaV]) for(let y=0;y<2;y++) for(let x=0;x<2;x++) grid[(mbY*2+y)*chromaWidth+mbX*2+x]=0;
+  }
+  predictedIntraMode(address: number, blockX: number, blockY: number) {
+    const mbX=address%this.widthMbs,mbY=Math.floor(address/this.widthMbs),width=this.widthMbs*4;
+    const x=mbX*4+blockX,y=mbY*4+blockY;
+    const modeAt=(candidateX:number,candidateY:number)=>candidateX<0||candidateY<0||candidateX>=width?2:(this.intraLuma[candidateY*width+candidateX]>=0?this.intraLuma[candidateY*width+candidateX]:2);
+    return Math.min(modeAt(x-1,y),modeAt(x,y-1));
+  }
+  setIntraMode(address: number, blockX: number, blockY: number, sizeIn4x4: number, mode: number) {
+    const mbX=address%this.widthMbs,mbY=Math.floor(address/this.widthMbs),width=this.widthMbs*4;
+    for(let y=0;y<sizeIn4x4;y++)for(let x=0;x<sizeIn4x4;x++)this.intraLuma[(mbY*4+blockY+y)*width+mbX*4+blockX+x]=mode;
   }
   readLuma(reader: BitReader, address: number, cbpLuma: number, intra16: boolean) {
     const mbX = address % this.widthMbs, mbY = Math.floor(address / this.widthMbs), width = this.widthMbs * 4;
@@ -259,12 +306,26 @@ class CavlcPicture {
   }
 }
 
+function readIntraModes(reader: BitReader, picture: CavlcPicture, address: number, blockSize: 4 | 8): H264IntraMode[] {
+  const count=blockSize===8?4:16,result:H264IntraMode[]=[];
+  for(let index=0;index<count;index++){
+    const blockX=blockSize===8?(index&1)*2:BLOCK_X[index],blockY=blockSize===8?(index>>1)*2:BLOCK_Y[index];
+    const predicted=picture.predictedIntraMode(address,blockX,blockY);
+    const usePredicted=Boolean(reader.readBit());
+    const mode=decodeH264IntraMode(predicted,usePredicted,usePredicted?0:reader.readBits(3));
+    const info=getH264IntraModeInfo(mode,blockSize);if(!info)throw new Error(`无效 Intra ${blockSize}×${blockSize} 预测模式 ${mode}`);
+    picture.setIntraMode(address,blockX,blockY,blockSize/4,mode);
+    result.push({x:blockX*4,y:blockY*4,width:blockSize,height:blockSize,mode,...info});
+  }
+  return result;
+}
+
 function readTe(reader: BitReader, count: number) { return count <= 1 ? (count === 1 ? 1-reader.readBit() : 0) : reader.readUE(); }
 function skipMotion(reader: BitReader, partitionCount: number, refs: number) { for(let i=0;i<partitionCount;i++) if(refs>1) readTe(reader,refs-1); for(let i=0;i<partitionCount;i++){reader.readSE();reader.readSE();} }
 
 function parseMacroblock(reader: BitReader, slice: SliceSyntax, address: number, unitIndex: number, picture: CavlcPicture): H264Macroblock {
   const rawType=reader.readUE();
-  let intraType=rawType, typeName="", prediction:H264Macroblock["prediction"]="Inter", partitions:H264Partition[]=[], cbp=0, qpDelta:number|undefined;
+  let intraType=rawType, typeName="", prediction:H264Macroblock["prediction"]="Inter", partitions:H264Partition[]=[], intraModes:H264IntraMode[]|undefined, cbp=0, qpDelta:number|undefined;
   if(slice.sliceType==="P") {
     if(rawType===0){typeName="P_L0_16×16";partitions=rectanglePartitions("16×16");skipMotion(reader,1,slice.numRefL0);}
     else if(rawType===1){typeName="P_L0_L0_16×8";partitions=rectanglePartitions("16×8");skipMotion(reader,2,slice.numRefL0);}
@@ -274,8 +335,8 @@ function parseMacroblock(reader: BitReader, slice: SliceSyntax, address: number,
   }
   if(slice.sliceType==="I"||intraType!==rawType) {
     prediction="Intra";
-    if(intraType===0){const transform8=slice.pps.transform8x8Mode&&Boolean(reader.readBit());const blocks=transform8?4:16;for(let i=0;i<blocks;i++)if(!reader.readBit())reader.readBits(3);reader.readUE();const code=reader.readUE();if(code>=CBP_INTRA.length)throw new Error("无效 intra coded_block_pattern");cbp=CBP_INTRA[code];if(cbp)qpDelta=reader.readSE();typeName=transform8?"I_8×8":"I_4×4";partitions=rectanglePartitions(transform8?"8×8":"4×4");picture.readLuma(reader,address,cbp&15,false);picture.readChroma(reader,address,cbp>>4);}
-    else if(intraType>=1&&intraType<=24){const value=intraType-1;cbp=((Math.floor(value/12))*15)|((Math.floor(value/4)%3)<<4);reader.readUE();qpDelta=reader.readSE();typeName=`I_16×16 (${value%4})`;partitions=rectanglePartitions("16×16");picture.readLuma(reader,address,cbp&15,true);picture.readChroma(reader,address,cbp>>4);}
+    if(intraType===0){const transform8=slice.pps.transform8x8Mode&&Boolean(reader.readBit());intraModes=readIntraModes(reader,picture,address,transform8?8:4);reader.readUE();const code=reader.readUE();if(code>=CBP_INTRA.length)throw new Error("无效 intra coded_block_pattern");cbp=CBP_INTRA[code];if(cbp)qpDelta=reader.readSE();typeName=transform8?"I_8×8":"I_4×4";partitions=rectanglePartitions(transform8?"8×8":"4×4");picture.readLuma(reader,address,cbp&15,false);picture.readChroma(reader,address,cbp>>4);}
+    else if(intraType>=1&&intraType<=24){const value=intraType-1,mode=value%4,info=getH264IntraModeInfo(mode,16);if(!info)throw new Error(`无效 Intra 16×16 预测模式 ${mode}`);intraModes=[{x:0,y:0,width:16,height:16,mode,...info}];cbp=((Math.floor(value/12))*15)|((Math.floor(value/4)%3)<<4);reader.readUE();qpDelta=reader.readSE();typeName=`I_16×16 (${mode})`;partitions=rectanglePartitions("16×16");picture.readLuma(reader,address,cbp&15,true);picture.readChroma(reader,address,cbp>>4);}
     else if(intraType===25){reader.align();const samples=256+2*8*8;if(reader.bitsRemaining<samples*8)throw new Error("I_PCM 数据不完整");for(let i=0;i<samples;i++)reader.readBits(8);typeName="I_PCM";prediction="PCM";partitions=rectanglePartitions("16×16");picture.resetMacroblock(address);}
     else throw new Error(`无效 I mb_type ${intraType}`);
   } else {
@@ -283,7 +344,7 @@ function parseMacroblock(reader: BitReader, slice: SliceSyntax, address: number,
     const code=reader.readUE();if(code>=CBP_INTER.length)throw new Error("无效 inter coded_block_pattern");cbp=CBP_INTER[code];
     if(cbp&&slice.pps.transform8x8Mode)reader.readBit();if(cbp)qpDelta=reader.readSE();picture.readLuma(reader,address,cbp&15,false);picture.readChroma(reader,address,cbp>>4);
   }
-  return {address,sliceUnitIndex:unitIndex,sliceType:slice.sliceType,rawType,typeName,prediction,skipped:false,codedBlockPattern:cbp,qpDelta,partitions};
+  return {address,sliceUnitIndex:unitIndex,sliceType:slice.sliceType,rawType,typeName,prediction,skipped:false,codedBlockPattern:cbp,qpDelta,partitions,intraModes};
 }
 
 function unitPayload(bytes: Uint8Array, unit: NalUnit) { return bytes.subarray(unit.offset+unit.startCodeSize+1,unit.offset+unit.size); }
