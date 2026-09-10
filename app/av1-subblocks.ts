@@ -45,12 +45,20 @@ export type Av1LeafBlock = {
   sizeName: string;
   mode: string;
   intraMode?: Av1IntraModeInfo;
+  motionVectors: Av1MotionVector[];
   transformSize: string;
   skipped: boolean;
   skipName: string;
   superblockAddress: number;
   tileColumn: number;
   tileRow: number;
+};
+
+export type Av1MotionVector = {
+  reference: number;
+  referenceName: string;
+  mvX: number;
+  mvY: number;
 };
 
 export type Av1SubblockAnalysis = {
@@ -80,6 +88,17 @@ function numericMatrix(value: unknown, name: string) {
     return row as number[];
   });
   return matrix;
+}
+
+function tupleMatrix(value: unknown, name: string, tupleSize: number, rows: number, columns: number, minimum: number, maximum: number) {
+  if (!Array.isArray(value) || value.length !== rows) throw new Error(`${name} 矩阵尺寸不一致`);
+  return value.map(row => {
+    if (!Array.isArray(row) || row.length !== columns) throw new Error(`${name} 矩阵尺寸不一致`);
+    return row.map(cell => {
+      if (!Array.isArray(cell) || cell.length !== tupleSize || cell.some(entry => !Number.isSafeInteger(entry) || entry < minimum || entry > maximum)) throw new Error(`${name} 矩阵内容无效`);
+      return cell as number[];
+    });
+  });
 }
 
 function inspectionMap(value: unknown, name: string): InspectionMap {
@@ -142,6 +161,10 @@ export function convertAv1InspectionFrame(raw: unknown, analysis: Analysis): Av1
   const transformNames = invert(inspectionMap(frame.transformSizeMap, "transformSizeMap"));
   const modeNames = invert(inspectionMap(frame.modeMap, "modeMap"));
   const skipNames = invert(inspectionMap(frame.skipMap, "skipMap"));
+  const hasMotionData = frame.motionVectors !== undefined || frame.referenceFrame !== undefined || frame.referenceFrameMap !== undefined;
+  const motionVectors = hasMotionData ? tupleMatrix(frame.motionVectors, "motionVectors", 4, miRows, miColumns, -32_768, 32_767) : undefined;
+  const referenceFrames = hasMotionData ? tupleMatrix(frame.referenceFrame, "referenceFrame", 2, miRows, miColumns, -1, 127) : undefined;
+  const referenceNames = hasMotionData ? invert(inspectionMap(frame.referenceFrameMap, "referenceFrameMap")) : undefined;
   const tileColumns = tileBoundaries(frame.tileCols, miColumns);
   const tileRows = tileBoundaries(frame.tileRows, miRows);
   const visited = new Uint8Array(miRows * miColumns);
@@ -171,6 +194,21 @@ export function convertAv1InspectionFrame(raw: unknown, analysis: Analysis): Av1
       const rawTransform = transformNames.get(transformSize[row][column]);
       const rawSkip = skipNames.get(skip[row][column]);
       const decodedMode = rawMode ?? `MODE_${mode[row][column]}`;
+      const intraMode = getAv1IntraModeInfo(decodedMode);
+      const blockMotionVectors: Av1MotionVector[] = [];
+      if (!intraMode && motionVectors && referenceFrames && referenceNames) {
+        for (let list = 0; list < 2; list += 1) {
+          const reference = referenceFrames[row][column][list];
+          const referenceName = referenceNames.get(reference);
+          if (reference < 0 || !referenceName) continue;
+          blockMotionVectors.push({
+            reference,
+            referenceName,
+            mvX: motionVectors[row][column][list * 2],
+            mvY: motionVectors[row][column][list * 2 + 1],
+          });
+        }
+      }
       blocks.push({
         id: blocks.length,
         x,
@@ -179,7 +217,8 @@ export function convertAv1InspectionFrame(raw: unknown, analysis: Analysis): Av1
         height: Math.min(size.height, pictureHeight - y),
         sizeName: sizeName.replace(/^BLOCK_/, ""),
         mode: decodedMode,
-        intraMode: getAv1IntraModeInfo(decodedMode),
+        intraMode,
+        motionVectors: blockMotionVectors,
         transformSize: (rawTransform ?? `TX_${transformSize[row][column]}`).replace(/^TX_/, ""),
         skipped: rawSkip === "SKIP" || skip[row][column] === 1,
         skipName: rawSkip ?? `SKIP_${skip[row][column]}`,

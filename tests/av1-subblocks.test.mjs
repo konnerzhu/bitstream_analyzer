@@ -85,6 +85,38 @@ test("classifies AV1 intra modes and preserves inter modes", async () => {
   }
 });
 
+test("attaches validated AV1 motion vectors and reference names to inter blocks", async () => {
+  const parser = await loadConverter();
+  try {
+    const frame = frameFixture();
+    frame.modeMap.NEARESTMV = 13;
+    for (const row of frame.mode) row.fill(13, 0, 4);
+    frame.motionVectors = Array.from({ length: 4 }, () => Array.from({ length: 8 }, () => [-16, 24, 0, 0]));
+    frame.referenceFrameMap = { INTRA_FRAME: 0, LAST_FRAME: 1 };
+    frame.referenceFrame = Array.from({ length: 4 }, () => Array.from({ length: 8 }, () => [1, -1]));
+    const result = parser.converter.convertAv1InspectionFrame(frame, analysis);
+    assert.equal(result.blocks[0].mode, "NEARESTMV");
+    assert.equal(result.blocks[0].intraMode, undefined);
+    assert.deepEqual(result.blocks[0].motionVectors, [{ reference: 1, referenceName: "LAST_FRAME", mvX: -16, mvY: 24 }]);
+    assert.deepEqual(result.blocks[1].motionVectors, []);
+  } finally {
+    await parser.dispose();
+  }
+});
+
+test("rejects out-of-range AV1 motion-vector inspection data", async () => {
+  const parser = await loadConverter();
+  try {
+    const frame = frameFixture();
+    frame.motionVectors = Array.from({ length: 4 }, () => Array.from({ length: 8 }, () => [40_000, 0, 0, 0]));
+    frame.referenceFrameMap = { INTRA_FRAME: 0, LAST_FRAME: 1 };
+    frame.referenceFrame = Array.from({ length: 4 }, () => Array.from({ length: 8 }, () => [1, -1]));
+    assert.throws(() => parser.converter.convertAv1InspectionFrame(frame, analysis), /motionVectors 矩阵内容无效/);
+  } finally {
+    await parser.dispose();
+  }
+});
+
 test("rejects inconsistent inspection matrix dimensions", async () => {
   const parser = await loadConverter();
   try {

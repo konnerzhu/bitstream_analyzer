@@ -9,12 +9,18 @@ export type H264IntraMode = {
   mode: number; name: string; directional: boolean; angle?: number;
 };
 
+export type H264MotionVector = {
+  x: number; y: number; width: number; height: number; mode: string;
+  reference: number; mvX: number; mvY: number; mvdX: number; mvdY: number;
+};
+
 export type H264Macroblock = {
   address: number; sliceUnitIndex: number; sliceType: string; rawType?: number;
   typeName: string; prediction: "Intra" | "Inter" | "Skip" | "PCM";
   skipped: boolean; codedBlockPattern?: number; qpDelta?: number;
   partitions: H264Partition[];
   intraModes?: H264IntraMode[];
+  motionVectors?: H264MotionVector[];
 };
 
 export type H264SubblockAnalysis = {
@@ -67,6 +73,7 @@ const CBP_INTER = [0,16,1,2,4,8,32,3,5,10,12,15,47,7,11,13,14,6,9,31,35,37,42,44
 const BLOCK_X = [0,1,0,1,2,3,2,3,0,1,0,1,2,3,2,3];
 const BLOCK_Y = [0,0,1,1,0,0,1,1,2,2,3,3,2,2,3,3];
 const MAX_MACROBLOCKS = 262_144;
+const MAX_MOTION_COMPONENT = 1_048_576;
 
 const H264_INTRA_4X4_MODES = new Map<number, Omit<H264IntraMode, "x" | "y" | "width" | "height" | "mode">>([
   [0, {name:"Vertical",directional:true,angle:90}],
@@ -203,6 +210,7 @@ function parseSliceHeader(payload: Uint8Array, unit: NalUnit, ppsMap: Map<number
   if (sliceType === "B") reader.readBit();
   let numRefL0 = pps.numRefL0, numRefL1 = pps.numRefL1;
   if (sliceType === "P" || sliceType === "SP" || sliceType === "B") if (reader.readBit()) { numRefL0 = reader.readUE() + 1; if (sliceType === "B") numRefL1 = reader.readUE() + 1; }
+  if (numRefL0 < 1 || numRefL0 > 32 || numRefL1 < 1 || numRefL1 > 32) throw new Error("活动参考图像数超出 H.264 范围");
   skipRefPicListModification(reader, sliceType);
   if ((pps.weightedPred && (sliceType === "P" || sliceType === "SP")) || (pps.weightedBipredIdc === 1 && sliceType === "B")) skipPredWeightTable(reader, sps, numRefL0, numRefL1, sliceType);
   skipDecRefPicMarking(reader, unit.type, unit.refIdc);
@@ -262,12 +270,18 @@ class CavlcPicture {
   private readonly chromaU: Int16Array;
   private readonly chromaV: Int16Array;
   private readonly intraLuma: Int8Array;
+  private readonly motionX: Int32Array;
+  private readonly motionY: Int32Array;
+  private readonly references: Int16Array;
   constructor(private readonly widthMbs: number, heightMbs: number) {
     if (widthMbs * heightMbs > MAX_MACROBLOCKS) throw new Error(`图像超过 ${MAX_MACROBLOCKS.toLocaleString()} 个宏块的解析上限`);
     this.luma = new Int16Array(widthMbs * 4 * heightMbs * 4); this.luma.fill(-1);
     this.intraLuma = new Int8Array(widthMbs * 4 * heightMbs * 4); this.intraLuma.fill(-1);
     this.chromaU = new Int16Array(widthMbs * 2 * heightMbs * 2); this.chromaU.fill(-1);
     this.chromaV = new Int16Array(widthMbs * 2 * heightMbs * 2); this.chromaV.fill(-1);
+    this.motionX = new Int32Array(widthMbs * 4 * heightMbs * 4);
+    this.motionY = new Int32Array(widthMbs * 4 * heightMbs * 4);
+    this.references = new Int16Array(widthMbs * 4 * heightMbs * 4); this.references.fill(-2);
   }
   private context(grid: Int16Array, width: number, x: number, y: number) {
     const left = x > 0 ? grid[y * width + x - 1] : -1, top = y > 0 ? grid[(y - 1) * width + x] : -1;
@@ -275,8 +289,59 @@ class CavlcPicture {
   }
   resetMacroblock(address: number) {
     const mbX = address % this.widthMbs, mbY = Math.floor(address / this.widthMbs), lumaWidth = this.widthMbs * 4, chromaWidth = this.widthMbs * 2;
-    for (let y=0;y<4;y++) for(let x=0;x<4;x++) { const index=(mbY*4+y)*lumaWidth+mbX*4+x; this.luma[index]=0; this.intraLuma[index]=-1; }
+    for (let y=0;y<4;y++) for(let x=0;x<4;x++) { const index=(mbY*4+y)*lumaWidth+mbX*4+x; this.luma[index]=0; this.intraLuma[index]=-1; this.motionX[index]=0; this.motionY[index]=0; this.references[index]=-1; }
     for (const grid of [this.chromaU,this.chromaV]) for(let y=0;y<2;y++) for(let x=0;x<2;x++) grid[(mbY*2+y)*chromaWidth+mbX*2+x]=0;
+  }
+  resetMotionMacroblock(address: number) {
+    const mbX = address % this.widthMbs, mbY = Math.floor(address / this.widthMbs), width = this.widthMbs * 4;
+    for (let y=0;y<4;y++) for(let x=0;x<4;x++) { const index=(mbY*4+y)*width+mbX*4+x; this.motionX[index]=0; this.motionY[index]=0; this.references[index]=-1; }
+  }
+  private motionAt(x: number, y: number) {
+    const width = this.widthMbs * 4;
+    if (x < 0 || y < 0 || x >= width || y >= this.motionX.length / width) return { reference: -2, x: 0, y: 0 };
+    const index = y * width + x;
+    return { reference: this.references[index], x: this.motionX[index], y: this.motionY[index] };
+  }
+  private predictedMotion(address: number, partition: H264Partition, reference: number) {
+    const x = (address % this.widthMbs) * 4 + partition.x / 4;
+    const y = Math.floor(address / this.widthMbs) * 4 + partition.y / 4;
+    const width = partition.width / 4;
+    const left = this.motionAt(x - 1, y);
+    const top = this.motionAt(x, y - 1);
+    let diagonal = this.motionAt(x + width, y - 1);
+    if (diagonal.reference === -2) diagonal = this.motionAt(x - 1, y - 1);
+    if (partition.width === 16 && partition.height === 8) {
+      const preferred = partition.y === 0 ? top : left;
+      if (preferred.reference === reference) return preferred;
+    } else if (partition.width === 8 && partition.height === 16) {
+      const preferred = partition.x === 0 ? left : diagonal;
+      if (preferred.reference === reference) return preferred;
+    }
+    const matches = [left, top, diagonal].filter(candidate => candidate.reference === reference);
+    if (matches.length === 1) return matches[0];
+    if (top.reference === -2 && diagonal.reference === -2 && left.reference !== -2) return left;
+    const median = (a: number, b: number, c: number) => a + b + c - Math.min(a, b, c) - Math.max(a, b, c);
+    return { reference, x: median(left.x, top.x, diagonal.x), y: median(left.y, top.y, diagonal.y) };
+  }
+  setMotion(address: number, partition: H264Partition, reference: number, mvdX: number, mvdY: number): H264MotionVector {
+    const predicted = this.predictedMotion(address, partition, reference);
+    const mvX = predicted.x + mvdX, mvY = predicted.y + mvdY;
+    if (!Number.isSafeInteger(mvX) || !Number.isSafeInteger(mvY) || Math.abs(mvX) > MAX_MOTION_COMPONENT || Math.abs(mvY) > MAX_MOTION_COMPONENT) throw new Error("H.264 运动矢量超出安全范围");
+    const baseX = (address % this.widthMbs) * 4 + partition.x / 4;
+    const baseY = Math.floor(address / this.widthMbs) * 4 + partition.y / 4;
+    const gridWidth = this.widthMbs * 4;
+    for (let y = 0; y < partition.height / 4; y += 1) for (let x = 0; x < partition.width / 4; x += 1) {
+      const index = (baseY + y) * gridWidth + baseX + x;
+      this.motionX[index] = mvX; this.motionY[index] = mvY; this.references[index] = reference;
+    }
+    return { ...partition, reference, mvX, mvY, mvdX, mvdY };
+  }
+  setSkipMotion(address: number) {
+    const partition = rectanglePartitions("16×16")[0];
+    const mbX = address % this.widthMbs, mbY = Math.floor(address / this.widthMbs);
+    const left = this.motionAt(mbX * 4 - 1, mbY * 4), top = this.motionAt(mbX * 4, mbY * 4 - 1);
+    const forceZero = left.reference === -2 || top.reference === -2 || (left.reference === 0 && left.x === 0 && left.y === 0) || (top.reference === 0 && top.x === 0 && top.y === 0);
+    return this.setMotion(address, partition, 0, forceZero ? -this.predictedMotion(address, partition, 0).x : 0, forceZero ? -this.predictedMotion(address, partition, 0).y : 0);
   }
   predictedIntraMode(address: number, blockX: number, blockY: number) {
     const mbX=address%this.widthMbs,mbY=Math.floor(address/this.widthMbs),width=this.widthMbs*4;
@@ -321,16 +386,21 @@ function readIntraModes(reader: BitReader, picture: CavlcPicture, address: numbe
 }
 
 function readTe(reader: BitReader, count: number) { return count <= 1 ? (count === 1 ? 1-reader.readBit() : 0) : reader.readUE(); }
-function skipMotion(reader: BitReader, partitionCount: number, refs: number) { for(let i=0;i<partitionCount;i++) if(refs>1) readTe(reader,refs-1); for(let i=0;i<partitionCount;i++){reader.readSE();reader.readSE();} }
+function readMotionDelta(reader: BitReader) { const value=reader.readSE();if(Math.abs(value)>MAX_MOTION_COMPONENT)throw new Error("H.264 MVD 超出安全范围");return value; }
+function readMotion(reader: BitReader, picture: CavlcPicture, address: number, partitions: H264Partition[], refs: number) {
+  const references=partitions.map(()=>refs>1?readTe(reader,refs-1):0);
+  return partitions.map((partition,index)=>picture.setMotion(address,partition,references[index],readMotionDelta(reader),readMotionDelta(reader)));
+}
 
 function parseMacroblock(reader: BitReader, slice: SliceSyntax, address: number, unitIndex: number, picture: CavlcPicture): H264Macroblock {
   const rawType=reader.readUE();
-  let intraType=rawType, typeName="", prediction:H264Macroblock["prediction"]="Inter", partitions:H264Partition[]=[], intraModes:H264IntraMode[]|undefined, cbp=0, qpDelta:number|undefined;
+  picture.resetMotionMacroblock(address);
+  let intraType=rawType, typeName="", prediction:H264Macroblock["prediction"]="Inter", partitions:H264Partition[]=[], intraModes:H264IntraMode[]|undefined, motionVectors:H264MotionVector[]|undefined, cbp=0, qpDelta:number|undefined;
   if(slice.sliceType==="P") {
-    if(rawType===0){typeName="P_L0_16×16";partitions=rectanglePartitions("16×16");skipMotion(reader,1,slice.numRefL0);}
-    else if(rawType===1){typeName="P_L0_L0_16×8";partitions=rectanglePartitions("16×8");skipMotion(reader,2,slice.numRefL0);}
-    else if(rawType===2){typeName="P_L0_L0_8×16";partitions=rectanglePartitions("8×16");skipMotion(reader,2,slice.numRefL0);}
-    else if(rawType===3||rawType===4){const types=[reader.readUE(),reader.readUE(),reader.readUE(),reader.readUE()];typeName=rawType===3?"P_8×8":"P_8×8ref0";partitions=subPartitions(types);if(rawType===3&&slice.numRefL0>1)for(let i=0;i<4;i++)readTe(reader,slice.numRefL0-1);for(const type of types)for(let i=0;i<[1,2,2,4][type];i++){reader.readSE();reader.readSE();}}
+    if(rawType===0){typeName="P_L0_16×16";partitions=rectanglePartitions("16×16");motionVectors=readMotion(reader,picture,address,partitions,slice.numRefL0);}
+    else if(rawType===1){typeName="P_L0_L0_16×8";partitions=rectanglePartitions("16×8");motionVectors=readMotion(reader,picture,address,partitions,slice.numRefL0);}
+    else if(rawType===2){typeName="P_L0_L0_8×16";partitions=rectanglePartitions("8×16");motionVectors=readMotion(reader,picture,address,partitions,slice.numRefL0);}
+    else if(rawType===3||rawType===4){const types=[reader.readUE(),reader.readUE(),reader.readUE(),reader.readUE()];typeName=rawType===3?"P_8×8":"P_8×8ref0";partitions=subPartitions(types);const subReferences=types.map(()=>rawType===3&&slice.numRefL0>1?readTe(reader,slice.numRefL0-1):0);let partitionIndex=0;motionVectors=[];for(let sub=0;sub<types.length;sub++)for(let i=0;i<[1,2,2,4][types[sub]];i++){const partition=partitions[partitionIndex++];motionVectors.push(picture.setMotion(address,partition,subReferences[sub],readMotionDelta(reader),readMotionDelta(reader)));}}
     else intraType=rawType-5;
   }
   if(slice.sliceType==="I"||intraType!==rawType) {
@@ -344,7 +414,7 @@ function parseMacroblock(reader: BitReader, slice: SliceSyntax, address: number,
     const code=reader.readUE();if(code>=CBP_INTER.length)throw new Error("无效 inter coded_block_pattern");cbp=CBP_INTER[code];
     if(cbp&&slice.pps.transform8x8Mode)reader.readBit();if(cbp)qpDelta=reader.readSE();picture.readLuma(reader,address,cbp&15,false);picture.readChroma(reader,address,cbp>>4);
   }
-  return {address,sliceUnitIndex:unitIndex,sliceType:slice.sliceType,rawType,typeName,prediction,skipped:false,codedBlockPattern:cbp,qpDelta,partitions,intraModes};
+  return {address,sliceUnitIndex:unitIndex,sliceType:slice.sliceType,rawType,typeName,prediction,skipped:false,codedBlockPattern:cbp,qpDelta,partitions,intraModes,motionVectors};
 }
 
 function unitPayload(bytes: Uint8Array, unit: NalUnit) { return bytes.subarray(unit.offset+unit.startCodeSize+1,unit.offset+unit.size); }
@@ -377,7 +447,7 @@ export function analyzeH264Subblocks(bytes: Uint8Array, analysis: Analysis, fram
         while(slice.reader.moreRbspData()&&address<count){
           if(slice.sliceType==="P"){
             const skipRun=slice.reader.readUE();if(skipRun>count-address)throw new Error("mb_skip_run 超出图像范围");
-            for(let i=0;i<skipRun;i++,address++){picture.resetMacroblock(address);macroblocks[address]={address,sliceUnitIndex:unit.index,sliceType:"P",typeName:"P_SKIP",prediction:"Skip",skipped:true,partitions:rectanglePartitions("16×16")};}
+            for(let i=0;i<skipRun;i++,address++){picture.resetMacroblock(address);const motion=picture.setSkipMotion(address);macroblocks[address]={address,sliceUnitIndex:unit.index,sliceType:"P",typeName:"P_SKIP",prediction:"Skip",skipped:true,partitions:rectanglePartitions("16×16"),motionVectors:[motion]};}
             if(!slice.reader.moreRbspData()||address>=count)break;
           }
           macroblocks[address]=parseMacroblock(slice.reader,slice,address,unit.index,picture);address++;

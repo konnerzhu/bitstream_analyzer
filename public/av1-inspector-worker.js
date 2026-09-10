@@ -7,7 +7,8 @@ importScripts("/vendor/aom-inspector/inspect.js");
 const MAX_FILE_BYTES = 64 * 1024 * 1024;
 const MAX_JSON_BYTES = 32 * 1024 * 1024;
 const MAX_FRAME_INDEX = 10_000;
-const INSPECTION_LAYERS = (1 << 1) | (1 << 2) | (1 << 4) | (1 << 5);
+// Block/transform size, prediction mode, skip, reference frames, and motion vectors.
+const INSPECTION_LAYERS = (1 << 1) | (1 << 2) | (1 << 4) | (1 << 5) | (1 << 8) | (1 << 9);
 
 function fail(message) {
   self.postMessage({ ok: false, error: message });
