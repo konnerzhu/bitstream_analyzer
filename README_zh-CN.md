@@ -37,6 +37,7 @@ BitScope 是一款可视化 H.264/AVC、H.265/HEVC、H.266/VVC 和 AV1 裸码流
 | **05** | 熵解码块 | 显示 H.264 CAVLC 宏块真实分区/帧内方向，以及 AV1 IVF 叶子块、帧内模式标称方向、变换尺寸和 Skip 状态 |
 | **06** | 语法详情 | 序列参数和单元头字段，以及大小受控的十六进制数据视图 |
 | **07** | 本地隐私 | 所有分析均在浏览器内完成，原始码流不会上传 |
+| **08** | 原生解码适配器 | 提供版本化 H.264 C ABI，可读取真实解码平面与解码器导出的运动矢量 |
 
 ## 输入格式
 
@@ -103,6 +104,7 @@ npm run dev
 | `app/codecs.ts` | 编码格式检测及 HEVC、VVC、AV1 结构解析 |
 | `app/h264.ts` | Annex-B 扫描、位读取、防竞争字节移除和 H.264 语法解析 |
 | `app/h264-subblocks.ts` | 带边界保护的 H.264 SPS/PPS/Slice 与 CAVLC 宏块/子分区解析 |
+| `native/h264-inspector/` | 基于 FFmpeg 的 H.264 原生解码适配器、检查 ABI 与 JSONL 诊断 CLI |
 | `app/analyzer.css` | 响应式分析界面与视觉样式 |
 | `public/` | 项目与应用图片资源 |
 
@@ -112,15 +114,23 @@ npm run dev
 npm run dev      # 启动本地开发服务器
 npm run build    # 生成生产构建
 npm run lint     # 执行静态检查
+npm run native:h264:build  # 构建可选的原生 H.264 适配器
 ```
 
 项目使用 TypeScript、React 19 和 vinext 开发。解析和解码逻辑有意保留在客户端，以便未来复用到桌面应用中。
+
+### 原生 H.264 检查后端
+
+第一阶段原生解码后端位于 `native/h264-inspector`。它通过带资源上限、版本化的 C ABI 包装 libavcodec，并对每个解码帧调用观察者回调。当前回调可提供真实的最终 YUV 平面与 FFmpeg 导出的运动矢量。ABI 已为预测像素、有符号残差、变换系数和去块滤波前像素预留槽位及能力位；在固定版本的 FFmpeg 分支加入对应重建路径钩子以前，这些能力位保持关闭。
+
+该原生适配器目前尚未接入浏览器产物。后续桌面 GUI 和 Emscripten Worker 将共用这层 C ABI。依赖、直接 CMake 命令及发行许可证要求见 `native/h264-inspector/README.md`。
 
 ## 已知限制
 
 - 当前支持 Annex-B NAL 裸码流、低开销 AV1 OBU 和 AV1 IVF；尚不包含通用容器解复用。
 - 解码结果取决于浏览器、操作系统以及可用的 AVC/HEVC/AV1 编解码实现；VVC 仅支持分析。
-- H.264 子块当前支持逐行 8-bit 4:2:0 CAVLC I/P Slice，包括亮度帧内预测模式；DC 与 Plane 会标记为非方向模式。CABAC、B Slice、FMO、隔行/MBAFF、运动矢量数值与残差系数数值会明确显示为不支持，不会通过推测填充。
+- 浏览器端 H.264 子块解析当前支持逐行 8-bit 4:2:0 CAVLC I/P Slice，包括亮度帧内预测模式和 List-0 运动矢量；DC 与 Plane 会标记为非方向模式。CABAC、B Slice、FMO、隔行/MBAFF 和残差系数数值会明确显示为不支持，不会通过推测填充。
+- 原生 H.264 适配器当前导出最终解码像素和运动矢量。真实预测、残差、系数和去块滤波前画面需要后续补丁解码器钩子，不会从最终画面反推生成。
 - AV1 子块 inspection 当前要求 IVF 容器；裸 OBU 仍显示顶层 Superblock 网格。
 - AV1 方向箭头表示模式的标称角度；当前随包提供的 inspection 数据尚未输出每个块可选的 angle delta。
 - AV1 inspection 在独立 Worker 中运行，并限制为最大 64 MB 输入、单帧 20 秒、32 MB JSON 结果和受控的矩阵/块数量。
@@ -131,7 +141,9 @@ npm run lint     # 执行静态检查
 
 - [ ] 发布适用于 macOS、Windows 和 Linux 的桌面 GUI 安装包
 - [x] 解析 H.264 CAVLC I/P 宏块类型和真实分区
-- [ ] 支持 H.264 CABAC/B Slice、运动矢量、参考帧和残差系数详情
+- [x] 使用稳定的帧/运动矢量检查 ABI 包装原生 FFmpeg H.264 解码器
+- [ ] 在固定版本 FFmpeg 中加入 H.264 预测、残差、系数和去块滤波前像素钩子
+- [ ] 支持 H.264 CABAC/B Slice 浏览器语法解析和参考帧详情
 - [ ] 支持 MP4/MKV/MPEG-TS 解复用和 AVCC 转换
 - [ ] 导出码流分析报告及帧/宏块数据
 - [ ] 深入解析 HEVC、VVC 和 AV1 的 Picture/Slice 语法
