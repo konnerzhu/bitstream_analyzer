@@ -1,10 +1,11 @@
 "use client";
 
-import { ChangeEvent, DragEvent, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, DragEvent, PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Analysis, CodecKind, NalUnit, SUPPORTED_EXTENSIONS, analyzeBitstream, formatBytes, unitColor } from "./codecs";
 import { H264SubblockAnalysis, analyzeH264Subblocks } from "./h264-subblocks";
 import { Av1LeafBlock, Av1SubblockAnalysis, inspectAv1Subblocks } from "./av1-subblocks";
 import { Locale, getCopy, localizeAv1IntraModeName, localizeBlockName, localizeH264IntraModeName, localizeParameterSetName, localizeTypeName } from "./i18n";
+import { PicturePoint, clampPicturePan, navigationViewport, shouldStartPicturePan, zoomAroundPoint } from "./picture-navigation";
 import { MAX_RESIDUAL_PIXELS, MAX_RESIDUAL_REGIONS, ResidualRegion, buildResidualImage, scaleResidualRegions } from "./residual";
 
 const MAX_FILE_SIZE = 200 * 1024 * 1024;
@@ -170,7 +171,9 @@ function DecodedPreview({ bytes, analysis, selected, onSelect, onIntraModeDistri
   const canvas = useRef<HTMLCanvasElement>(null);
   const residualCanvas = useRef<HTMLCanvasElement>(null);
   const macroblockCanvas = useRef<HTMLCanvasElement>(null);
+  const navigatorCanvas = useRef<HTMLCanvasElement>(null);
   const canvasWrap = useRef<HTMLDivElement>(null);
+  const frameStage = useRef<HTMLDivElement>(null);
   const [state, setState] = useState<"decoding" | "ready" | "unsupported" | "error">("decoding");
   const [message, setMessage] = useState(copy.decoderInitializing);
   const [showMacroblocks, setShowMacroblocks] = useState(true);
@@ -183,7 +186,13 @@ function DecodedPreview({ bytes, analysis, selected, onSelect, onIntraModeDistri
   const [selectedAv1Block, setSelectedAv1Block] = useState(0);
   const [av1Inspection, setAv1Inspection] = useState<{ source: Uint8Array; framePosition: number; result: Av1SubblockAnalysis } | null>(null);
   const [zoom, setZoom] = useState(1);
-  const [zoomOrigin, setZoomOrigin] = useState({ x: 50, y: 50 });
+  const zoomRef = useRef(1);
+  const [pan, setPan] = useState<PicturePoint>({ x: 0, y: 0 });
+  const panRef = useRef<PicturePoint>({ x: 0, y: 0 });
+  const [panning, setPanning] = useState(false);
+  const panGesture = useRef<{ pointerId: number; clientX: number; clientY: number; start: PicturePoint } | null>(null);
+  const didPan = useRef(false);
+  const [viewGeometry, setViewGeometry] = useState({ viewportWidth: 0, viewportHeight: 0, contentWidth: 0, contentHeight: 0 });
   const frames = useMemo(() => analysis.units.filter(unit => unit.frameStart), [analysis]);
   const framePosition = Math.max(0, frames.findLastIndex(frame => frame.index <= (selected?.index ?? 0)));
   const target = frames[framePosition];
@@ -217,6 +226,7 @@ function DecodedPreview({ bytes, analysis, selected, onSelect, onIntraModeDistri
   }, [locale, parsedMacroblock]);
   const av1LeafBlock = av1Subblocks?.status === "ready" ? av1Subblocks.blocks[selectedAv1Block] : undefined;
   const av1IntraModeName = av1LeafBlock?.intraMode ? localizeAv1IntraModeName(av1LeafBlock.mode, av1LeafBlock.intraMode.name, locale) : undefined;
+  const navigatorViewport = useMemo(() => navigationViewport(viewGeometry.viewportWidth, viewGeometry.viewportHeight, viewGeometry.contentWidth, viewGeometry.contentHeight, zoom, pan), [pan, viewGeometry, zoom]);
   const intraModeDistribution = useMemo<ModeDistribution | null>(() => {
     if (!showIntraModes || !intraModesAvailable) return null;
     return summarizeModes(analysis.codecKind === "h264" ? h264IntraModeEntries(h264Subblocks, locale) : av1IntraModeEntries(av1Subblocks, locale), locale);
@@ -243,6 +253,17 @@ function DecodedPreview({ bytes, analysis, selected, onSelect, onIntraModeDistri
 
   useEffect(() => () => { onIntraModeDistributionChange(null); onInterModeDistributionChange(null); }, [onInterModeDistributionChange, onIntraModeDistributionChange]);
 
+  const setPictureTransform = useCallback((zoomValue: number, panValue: PicturePoint) => {
+    const nextZoom = Math.min(8, Math.max(.5, Number.isFinite(zoomValue) ? zoomValue : 1));
+    const wrapper = canvasWrap.current;
+    const stage = frameStage.current;
+    const nextPan = wrapper && stage ? clampPicturePan(wrapper.clientWidth, wrapper.clientHeight, stage.offsetWidth, stage.offsetHeight, nextZoom, panValue) : { x: 0, y: 0 };
+    zoomRef.current = nextZoom;
+    panRef.current = nextPan;
+    setZoom(nextZoom);
+    setPan(nextPan);
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     if (analysis.codecKind !== "av1" || !target) return;
@@ -262,12 +283,38 @@ function DecodedPreview({ bytes, analysis, selected, onSelect, onIntraModeDistri
     const handleWheel = (event: WheelEvent) => {
       event.preventDefault();
       const bounds = element.getBoundingClientRect();
-      setZoomOrigin({ x: Math.min(100, Math.max(0, (event.clientX - bounds.left) / bounds.width * 100)), y: Math.min(100, Math.max(0, (event.clientY - bounds.top) / bounds.height * 100)) });
-      setZoom(current => Math.min(8, Math.max(.5, current * Math.exp(-event.deltaY * .002))));
+      const anchor = { x: event.clientX - bounds.left - bounds.width / 2, y: event.clientY - bounds.top - bounds.height / 2 };
+      const next = zoomAroundPoint(zoomRef.current, zoomRef.current * Math.exp(-event.deltaY * .002), panRef.current, anchor);
+      setPictureTransform(next.zoom, next.pan);
     };
     element.addEventListener("wheel", handleWheel, { passive: false });
     return () => element.removeEventListener("wheel", handleWheel);
-  }, []);
+  }, [setPictureTransform]);
+
+  useEffect(() => {
+    const wrapper = canvasWrap.current;
+    const stage = frameStage.current;
+    if (!wrapper || !stage || typeof ResizeObserver === "undefined") return;
+    const updateGeometry = () => {
+      const next = { viewportWidth: wrapper.clientWidth, viewportHeight: wrapper.clientHeight, contentWidth: stage.offsetWidth, contentHeight: stage.offsetHeight };
+      setViewGeometry(current => current.viewportWidth === next.viewportWidth && current.viewportHeight === next.viewportHeight && current.contentWidth === next.contentWidth && current.contentHeight === next.contentHeight ? current : next);
+      setPictureTransform(zoomRef.current, panRef.current);
+    };
+    const observer = new ResizeObserver(updateGeometry);
+    observer.observe(wrapper);
+    observer.observe(stage);
+    return () => observer.disconnect();
+  }, [setPictureTransform]);
+
+  useEffect(() => {
+    if (state !== "ready") return;
+    const source = pictureView === "residual" ? residualCanvas.current : canvas.current;
+    const targetCanvas = navigatorCanvas.current;
+    if (!source || !targetCanvas || !source.width || !source.height) return;
+    targetCanvas.width = 160;
+    targetCanvas.height = Math.max(48, Math.min(112, Math.round(160 * source.height / source.width)));
+    targetCanvas.getContext("2d")?.drawImage(source, 0, 0, targetCanvas.width, targetCanvas.height);
+  }, [framePosition, pictureView, residualGain, residualSummary, state, zoom]);
 
   useEffect(() => {
     const overlay = macroblockCanvas.current;
@@ -385,6 +432,7 @@ function DecodedPreview({ bytes, analysis, selected, onSelect, onIntraModeDistri
   }, [analysis.codecKind, analysis.sps, av1LeafBlock, av1Subblocks, blockSize, h264Subblocks, macroblockColumn, macroblockColumns, macroblockRow, parsedMacroblock, showInterModes, showIntraModes, showMacroblocks]);
 
   const selectMacroblockAt = (clientX: number, clientY: number) => {
+    if (didPan.current) { didPan.current = false; return; }
     const overlay = macroblockCanvas.current;
     if (!overlay || !showMacroblocks || !macroblockColumns || !macroblockRows) return;
     const bounds = overlay.getBoundingClientRect();
@@ -403,7 +451,48 @@ function DecodedPreview({ bytes, analysis, selected, onSelect, onIntraModeDistri
     setSelectedMacroblock(row * macroblockColumns + column);
   };
 
-  const changeZoom = (value: number) => setZoom(Math.min(8, Math.max(.5, value)));
+  const changeZoom = (value: number) => {
+    const next = zoomAroundPoint(zoomRef.current, value, panRef.current, { x: 0, y: 0 });
+    setPictureTransform(next.zoom, next.pan);
+  };
+
+  const beginPan = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0 || zoomRef.current <= 1 || (event.target instanceof Element && event.target.closest("button,input"))) return;
+    didPan.current = false;
+    panGesture.current = { pointerId: event.pointerId, clientX: event.clientX, clientY: event.clientY, start: panRef.current };
+  };
+
+  const movePan = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const gesture = panGesture.current;
+    if (!gesture || gesture.pointerId !== event.pointerId) return;
+    const deltaX = event.clientX - gesture.clientX;
+    const deltaY = event.clientY - gesture.clientY;
+    if (!didPan.current && !shouldStartPicturePan(deltaX, deltaY)) return;
+    if (!didPan.current) {
+      didPan.current = true;
+      event.currentTarget.setPointerCapture(event.pointerId);
+      setPanning(true);
+    }
+    event.preventDefault();
+    setPictureTransform(zoomRef.current, { x: gesture.start.x + deltaX, y: gesture.start.y + deltaY });
+  };
+
+  const endPan = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (panGesture.current?.pointerId !== event.pointerId) return;
+    panGesture.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+    setPanning(false);
+  };
+
+  const navigateFromMap = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const horizontal = Math.min(1, Math.max(0, (event.clientX - bounds.left) / Math.max(1, bounds.width)));
+    const vertical = Math.min(1, Math.max(0, (event.clientY - bounds.top) / Math.max(1, bounds.height)));
+    setPictureTransform(zoomRef.current, {
+      x: (.5 - horizontal) * viewGeometry.contentWidth * zoomRef.current,
+      y: (.5 - vertical) * viewGeometry.contentHeight * zoomRef.current,
+    });
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -508,8 +597,8 @@ function DecodedPreview({ bytes, analysis, selected, onSelect, onIntraModeDistri
 
   return <section className="decode-card">
     <div className="section-title"><div><span>01</span><h3>{copy.decodedPicture}</h3></div><small>{target ? `FRAME ${framePosition + 1} / ${frames.length} · ${analysis.unitName} #${target.index}` : copy.noFrame}</small></div>
-    <div ref={canvasWrap} className="canvas-wrap" title={copy.wheelZoom}>
-      <div className="frame-stage" style={{ transform: `scale(${zoom})`, transformOrigin: `${zoomOrigin.x}% ${zoomOrigin.y}%` }}>
+    <div ref={canvasWrap} className={`canvas-wrap ${zoom > 1 ? "zoomed" : ""} ${panning ? "panning" : ""}`} title={copy.wheelZoom} onPointerDown={beginPan} onPointerMove={movePan} onPointerUp={endPan} onPointerCancel={endPan}>
+      <div ref={frameStage} className="frame-stage" style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }}>
         <canvas ref={canvas} className={`picture-canvas ${pictureView === "final" ? "visible" : ""}`} aria-label={copy.decodedCanvas} />
         <canvas ref={residualCanvas} className={`picture-canvas residual-canvas ${pictureView === "residual" ? "visible" : ""}`} aria-label={copy.residualCanvas} />
         <canvas ref={macroblockCanvas} className={`macroblock-overlay ${showMacroblocks ? "visible" : ""}`} role="button" tabIndex={showMacroblocks ? 0 : -1} aria-label={`${blockName} ${copy.gridSelection} ${analysis.codecKind === "av1" && av1LeafBlock ? `${copy.leafBlock} ${av1LeafBlock.id}` : macroblockAddress}`} onClick={event => selectMacroblockAt(event.clientX, event.clientY)} onKeyDown={event => {
@@ -533,8 +622,12 @@ function DecodedPreview({ bytes, analysis, selected, onSelect, onIntraModeDistri
         <button onClick={() => changeZoom(zoom / 1.25)} aria-label={copy.zoomOut}>−</button>
         <b aria-live="polite">{Math.round(zoom * 100)}%</b>
         <button onClick={() => changeZoom(zoom * 1.25)} aria-label={copy.zoomIn}>+</button>
-        <button className="fit" onClick={() => { setZoom(1); setZoomOrigin({ x: 50, y: 50 }); }}>{copy.fit}</button>
+        <button className="fit" onClick={() => setPictureTransform(1, { x: 0, y: 0 })}>{copy.fit}</button>
       </div>
+      {zoom > 1 && <button className="picture-navigator" aria-label={copy.pictureNavigator} title={copy.pictureNavigatorHint} onPointerDown={event => { event.currentTarget.setPointerCapture(event.pointerId); navigateFromMap(event); }} onPointerMove={event => { if (event.currentTarget.hasPointerCapture(event.pointerId)) navigateFromMap(event); }} onPointerUp={event => { if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId); }}>
+        <canvas ref={navigatorCanvas} aria-hidden="true" />
+        <i style={{ left: `${navigatorViewport.left * 100}%`, top: `${navigatorViewport.top * 100}%`, width: `${navigatorViewport.width * 100}%`, height: `${navigatorViewport.height * 100}%` }} />
+      </button>}
       {displayState !== "ready" && <div className={`decode-status ${displayState}`}><i />{displayMessage}</div>}
     </div>
     <div className="frame-controls">
