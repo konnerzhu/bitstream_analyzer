@@ -91,7 +91,7 @@ The English interface is available at [`/`](http://localhost:3000/), and the Sim
 ## Using the analyzer
 
 1. Load an AVC/HEVC/VVC Annex-B stream, an AV1 OBU stream, or an AV1 IVF file.
-2. Select a frame, NAL unit, or OBU from the timeline/list.
+2. Select a frame, NAL unit, or OBU from the timeline.
 3. Inspect the synchronized decoded picture and syntax panel.
 4. Enable the coding-block overlay and click a block to view its address, coordinates, bounds, and available slice association. For supported H.264 CAVLC streams and AV1 IVF, use **Intra modes** to independently show or hide nominal-direction arrows.
 5. Scroll the mouse wheel over the picture to zoom from **50% to 800%**; use **Fit** to return to the available viewport.
