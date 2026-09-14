@@ -13,6 +13,8 @@
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "native:h264:configure": "cmake -S native/h264-inspector -B build/h264-inspector -DCMAKE_BUILD_TYPE=Release",
     "native:h264:build": "npm run native:h264:configure && cmake --build build/h264-inspector --parallel",
+    "native:av1:configure": "cmake -S native/av1-decoder -B build/av1-decoder -DCMAKE_BUILD_TYPE=Release",
+    "native:av1:build": "npm run native:av1:configure && cmake --build build/av1-decoder --parallel",
     "db:generate": "drizzle-kit generate"
   },
   "dependencies": {

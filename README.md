@@ -37,7 +37,7 @@ Drop in an Annex-B NAL stream or a low-overhead AV1 OBU stream and BitScope pars
 | **05** | Entropy-decoded blocks | H.264 CAVLC macroblock partitions/intra directions plus AV1 IVF leaf-block, intra-mode direction, transform, and skip overlays |
 | **06** | Syntax details | Parsed sequence fields and unit headers alongside a bounded hexadecimal view |
 | **07** | Private by design | Analysis stays inside the browser; the source stream is never uploaded |
-| **08** | Native decoder adapter | Versioned H.264 C ABI for exact decoded planes and decoder-exported motion vectors |
+| **08** | Native decoder adapters | Versioned H.264/AV1 C ABIs for exact decoded planes and decoder metadata |
 
 ## Supported input
 
@@ -111,6 +111,7 @@ If WebCodecs or a matching browser decoder is unavailable, bitstream parsing sti
 | `app/av1-subblocks.ts` | Validates and converts libaom inspection MI maps into selectable AV1 leaf blocks |
 | `public/av1-inspector-worker.js` | Runs the pinned libaom WebAssembly inspector off the UI thread with resource limits |
 | `native/h264-inspector/` | FFmpeg-backed H.264 native decoder adapter, inspection ABI, and JSONL diagnostic CLI |
+| `native/av1-decoder/` | dav1d-backed AV1 IVF/OBU decoder adapter, inspection ABI, and JSONL diagnostic CLI |
 | `app/analyzer.css` | Responsive analyzer layout and visual system |
 | `public/` | Repository and application artwork |
 
@@ -121,6 +122,7 @@ npm run dev      # start the local development server
 npm run build    # create a production build
 npm run lint     # run static checks
 npm run native:h264:build  # build the optional native H.264 adapter
+npm run native:av1:build   # build the optional native AV1/dav1d adapter
 ```
 
 The analyzer is written in TypeScript with React 19 and vinext. Parsing and decoding intentionally remain client-side so the same core can later be packaged as a desktop application.
@@ -131,12 +133,19 @@ The first native-decoder phase is available under `native/h264-inspector`. It wr
 
 The native adapter is not wired into the browser bundle yet. Its C ABI is intended to remain the boundary for a later desktop integration and an Emscripten Worker build. See `native/h264-inspector/README.md` for prerequisites, direct CMake commands, and distribution-license requirements.
 
+### Native AV1 decoder backend
+
+`native/av1-decoder` wraps dav1d 1.5.1 or newer behind a second bounded, versioned C ABI. It accepts IVF and raw low-overhead OBU input, and exposes exact decoded YUV planes, 8/10/12-bit layout information, frame type, render size, timestamps, spatial/temporal IDs, color metadata, and explicit film-grain control. Film grain is disabled by default for reconstruction inspection.
+
+This decoder complements rather than replaces the libaom inspection Worker: dav1d supplies real decoded pictures, while libaom currently supplies the per-block partition, mode, transform, and motion-vector maps. Browser/desktop wiring is a subsequent integration step.
+
 ## Known limitations
 
 - Raw Annex-B NAL streams, low-overhead AV1 OBU streams, and AV1 IVF are supported; general-purpose container demuxing is not included.
 - Decoded output depends on the browser, operating system, and available AVC/HEVC/AV1 codec implementation; VVC is analysis-only.
 - The browser H.264 subblock parser currently covers progressive 8-bit 4:2:0 CAVLC I/P slices, including luma intra prediction modes and list-0 motion vectors. DC and Plane are shown as non-directional; CABAC, B slices, FMO, interlaced/MBAFF pictures, and residual coefficient values are reported as unsupported rather than inferred.
 - The native H.264 adapter currently exports final decoder pixels and motion vectors. Exact prediction, residual, coefficient, and pre-deblocking output requires the planned patched-decoder hooks and is not synthesized from the final image.
+- The native AV1/dav1d adapter currently exports final pixels and frame metadata. dav1d's public API does not expose per-block residual, coefficient, prediction, or motion-vector maps, so libaom inspection remains responsible for those overlays.
 - AV1 subblock inspection currently requires an IVF container. Raw low-overhead OBU streams continue to show their top-level Superblock grid because the bundled inspector consumes IVF.
 - AV1 directional arrows show the mode's nominal angle. The bundled inspection data does not currently expose each block's optional angle delta.
 - AV1 inspection runs in a dedicated Worker and is bounded to 64 MB input, 20 seconds per selected frame, 32 MB JSON output, and validated matrix/block counts.
@@ -148,6 +157,7 @@ The native adapter is not wired into the browser bundle yet. Its C ABI is intend
 - [ ] Ship installable desktop GUI packages for macOS, Windows, and Linux
 - [x] Decode H.264 CAVLC I/P macroblock types and partition geometry
 - [x] Wrap the native FFmpeg H.264 decoder with a stable frame/MV inspection ABI
+- [x] Wrap the native dav1d AV1 decoder with a stable IVF/OBU frame inspection ABI
 - [ ] Add pinned FFmpeg H.264 reconstruction hooks for prediction, residuals, coefficients, and pre-deblocking pixels
 - [ ] Add H.264 CABAC/B-slice browser syntax parsing and reference details
 - [ ] Add MP4/MKV/MPEG-TS demuxing and AVCC conversion
