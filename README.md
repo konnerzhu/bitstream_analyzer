@@ -85,6 +85,10 @@ Open [http://localhost:3000](http://localhost:3000), then drag a supported eleme
 
 The English interface is available at [`/`](http://localhost:3000/), and the Simplified Chinese interface is available at [`/zh-CN`](http://localhost:3000/zh-CN). Both routes share the same analyzer and can be switched from the header.
 
+### Install the desktop GUI
+
+The macOS Apple Silicon release is a self-contained `.dmg`: open it and drag **BitScope** to Applications. End users do not need Node.js, npm, FFmpeg, or dav1d. The current local build is unsigned, so development builds may require **Open** from Finder's context menu; public releases should be signed and notarized with an Apple Developer ID.
+
 ### Native desktop development
 
 Install FFmpeg and dav1d development libraries, then launch the Electron host:
@@ -95,8 +99,13 @@ npm run desktop:dev
 
 The command builds both native adapters, starts or reuses the local UI server, and opens the same interface with a restricted native decoder bridge. H.264 pictures are decoded by FFmpeg and AV1 pictures by dav1d; the GUI falls back to WebCodecs when the bridge or a native decoder is unavailable.
 
-> [!IMPORTANT]
-> These are developer commands. A self-contained desktop GUI package that does not require Node.js is planned, but is not published yet.
+To produce the self-contained macOS arm64 DMG and ZIP as a maintainer:
+
+```bash
+npm run desktop:dist:mac
+```
+
+This packaging build downloads checksum-pinned FFmpeg 7.1.5 source, compiles an LGPL-only static H.264 decoder, bundles dav1d beside the AV1 adapter, and writes artifacts to `release/`.
 
 ## Using the analyzer
 
@@ -135,6 +144,7 @@ npm run lint     # run static checks
 npm run native:h264:build  # build the optional native H.264 adapter
 npm run native:av1:build   # build the optional native AV1/dav1d adapter
 npm run desktop:dev        # build native adapters and open the desktop GUI
+npm run desktop:dist:mac   # build a self-contained macOS arm64 DMG and ZIP
 ```
 
 The analyzer is written in TypeScript with React 19 and vinext. Parsing and decoding intentionally remain client-side so the same core can later be packaged as a desktop application.
@@ -166,7 +176,8 @@ This decoder complements rather than replaces the libaom inspection Worker: dav1
 
 ## Roadmap
 
-- [ ] Ship installable desktop GUI packages for macOS, Windows, and Linux
+- [x] Ship a self-contained macOS Apple Silicon desktop GUI package
+- [ ] Add signed/notarized macOS Intel, Windows, and Linux release packages
 - [x] Decode H.264 CAVLC I/P macroblock types and partition geometry
 - [x] Wrap the native FFmpeg H.264 decoder with a stable frame/MV inspection ABI
 - [x] Wrap the native dav1d AV1 decoder with a stable IVF/OBU frame inspection ABI

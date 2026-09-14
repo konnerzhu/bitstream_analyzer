@@ -83,6 +83,10 @@ npm run dev
 
 打开 [http://localhost:3000](http://localhost:3000)，将受支持的裸码流拖入页面，或从磁盘选择文件。
 
+### 安装桌面 GUI
+
+macOS Apple Silicon 版本为完整的 `.dmg` 安装包：打开后将 **BitScope** 拖到“应用程序”即可。终端用户无需安装 Node.js、npm、FFmpeg 或 dav1d。当前本地构建尚未签名，开发包可能需要在 Finder 中右键选择“打开”；公开发布时应使用 Apple Developer ID 完成签名与公证。
+
 ### 原生桌面开发模式
 
 安装 FFmpeg 与 dav1d 开发库后，启动 Electron 宿主：
@@ -93,8 +97,13 @@ npm run desktop:dev
 
 该命令会构建两个原生适配器、启动或复用本地 UI 服务，并通过受限的原生解码桥打开同一套界面。H.264 画面由 FFmpeg 解码，AV1 画面由 dav1d 解码；原生桥或解码器不可用时自动回退到 WebCodecs。
 
-> [!IMPORTANT]
-> 以上是开发环境命令。无需安装 Node.js 的独立桌面 GUI 安装包已经列入计划，但目前尚未发布。
+维护者可使用以下命令生成独立的 macOS arm64 DMG 与 ZIP：
+
+```bash
+npm run desktop:dist:mac
+```
+
+该打包流程会下载带固定 SHA-256 校验的 FFmpeg 7.1.5 源码，构建仅启用 LGPL 组件的静态 H.264 解码器，将 dav1d 与 AV1 适配器一并打包，并把产物写入 `release/`。
 
 ## 使用方法
 
@@ -129,6 +138,7 @@ npm run lint     # 执行静态检查
 npm run native:h264:build  # 构建可选的原生 H.264 适配器
 npm run native:av1:build   # 构建可选的原生 AV1/dav1d 适配器
 npm run desktop:dev        # 构建原生适配器并打开桌面 GUI
+npm run desktop:dist:mac   # 生成独立的 macOS arm64 DMG 与 ZIP
 ```
 
 项目使用 TypeScript、React 19 和 vinext 开发。解析和解码逻辑有意保留在客户端，以便未来复用到桌面应用中。
@@ -160,7 +170,8 @@ Electron 桌面宿主现已通过受限 IPC 桥把该 ABI 接入解码画布。�
 
 ## 路线图
 
-- [ ] 发布适用于 macOS、Windows 和 Linux 的桌面 GUI 安装包
+- [x] 发布独立的 macOS Apple Silicon 桌面 GUI 安装包
+- [ ] 增加已签名/公证的 macOS Intel、Windows 和 Linux 安装包
 - [x] 解析 H.264 CAVLC I/P 宏块类型和真实分区
 - [x] 使用稳定的帧/运动矢量检查 ABI 包装原生 FFmpeg H.264 解码器
 - [x] 使用稳定的 IVF/OBU 帧检查 ABI 包装原生 dav1d AV1 解码器

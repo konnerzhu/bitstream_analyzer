@@ -685,7 +685,8 @@ function DecodedPreview({ bytes, analysis, selected, onSelect, onIntraModeDistri
 
 export default function Analyzer({ locale }: { locale: Locale }) {
   const copy = getCopy(locale);
-  const languageHref = locale === "en" ? "/zh-CN" : "/";
+  const desktop = typeof window !== "undefined" && window.location.protocol === "bitscope:";
+  const languageHref = desktop ? (locale === "en" ? "#/zh-CN" : "#/en") : (locale === "en" ? "/zh-CN" : "/");
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [fileName, setFileName] = useState("");
   const [error, setError] = useState("");

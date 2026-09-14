@@ -1,10 +1,23 @@
 "use strict";
 
-const { app, BrowserWindow, ipcMain, session } = require("electron");
-const { join, resolve } = require("node:path");
+const { app, BrowserWindow, ipcMain, net, protocol, session } = require("electron");
+const { access } = require("node:fs/promises");
+const { join, resolve, sep } = require("node:path");
+const { pathToFileURL } = require("node:url");
 const { decodeNativeFrame } = require("./native-runner.cjs");
 
 const projectRoot = resolve(__dirname, "..");
+const packagedUrl = new URL("bitscope://app/");
+
+protocol.registerSchemesAsPrivileged([{
+  scheme: "bitscope",
+  privileges: {
+    standard: true,
+    secure: true,
+    supportFetchAPI: true,
+    corsEnabled: false,
+  },
+}]);
 
 function developmentUrl() {
   const value = process.env.BITSCOPE_DEV_SERVER_URL || "http://localhost:3000/";
@@ -17,14 +30,15 @@ function developmentUrl() {
 
 function sameOrigin(candidate, expected) {
   try {
-    return new URL(candidate).origin === expected.origin;
+    const value = new URL(candidate);
+    return value.protocol === expected.protocol && value.host === expected.host;
   } catch {
     return false;
   }
 }
 
 async function createWindow() {
-  const url = developmentUrl();
+  const url = app.isPackaged ? packagedUrl : developmentUrl();
   const window = new BrowserWindow({
     width: 1500,
     height: 980,
@@ -48,12 +62,37 @@ async function createWindow() {
   await window.loadURL(url.href);
 }
 
+async function registerPackagedRenderer() {
+  const rendererRoot = join(app.getAppPath(), "renderer");
+  await protocol.handle("bitscope", async request => {
+    const requestUrl = new URL(request.url);
+    if (requestUrl.hostname !== "app") return new Response("Not found", { status: 404 });
+    let pathname;
+    try {
+      pathname = decodeURIComponent(requestUrl.pathname);
+    } catch {
+      return new Response("Bad request", { status: 400 });
+    }
+    const candidate = resolve(rendererRoot, `.${pathname === "/" ? "/index.html" : pathname}`);
+    if (candidate !== rendererRoot && !candidate.startsWith(`${rendererRoot}${sep}`)) {
+      return new Response("Forbidden", { status: 403 });
+    }
+    try {
+      await access(candidate);
+    } catch {
+      return new Response("Not found", { status: 404 });
+    }
+    return net.fetch(pathToFileURL(candidate).href);
+  });
+}
+
 app.enableSandbox();
 app.whenReady().then(async () => {
-  const allowedOrigin = developmentUrl().origin;
+  if (app.isPackaged) await registerPackagedRenderer();
+  const allowedUrl = app.isPackaged ? packagedUrl : developmentUrl();
   session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
   ipcMain.handle("bitscope:decode-frame", async (event, request) => {
-    if (!event.senderFrame || !sameOrigin(event.senderFrame.url, new URL(allowedOrigin))) throw new Error("Native decode request came from an unexpected origin");
+    if (!event.senderFrame || !sameOrigin(event.senderFrame.url, allowedUrl)) throw new Error("Native decode request came from an unexpected origin");
     return decodeNativeFrame(request, {
       isPackaged: app.isPackaged,
       projectRoot,

@@ -8,6 +8,18 @@ option(BITSCOPE_ENABLE_SANITIZERS "Enable AddressSanitizer and UndefinedBehavior
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET libavcodec libavutil)
 
+# pkg-config represents Apple frameworks as adjacent `-framework Name` tokens.
+# CMake's imported PkgConfig target can flatten those into malformed linker
+# arguments when consuming static FFmpeg archives, so spell them as framework
+# library items on Apple platforms.
+if(APPLE)
+  set_property(TARGET PkgConfig::FFMPEG PROPERTY INTERFACE_LINK_OPTIONS "")
+  set_property(TARGET PkgConfig::FFMPEG APPEND PROPERTY INTERFACE_LINK_LIBRARIES
+    "-framework CoreFoundation"
+    "-framework CoreVideo"
+    "-framework CoreMedia")
+endif()
+
 add_library(bitscope_h264_inspector STATIC src/inspector.cpp)
 target_include_directories(bitscope_h264_inspector PUBLIC include)
 target_link_libraries(bitscope_h264_inspector PUBLIC PkgConfig::FFMPEG)
