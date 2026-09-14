@@ -506,7 +506,6 @@ function DecodedPreview({ bytes, analysis, selected, onSelect, onIntraModeDistri
     if (!target || unavailableMessage) return;
     const decode = async () => {
       setResidualSummary(null);
-      setPictureView("final");
       setDecoderBackend("");
       setState("decoding"); setMessage(locale === "en" ? `${copy.decodingFrame} ${framePosition + 1}…` : `${copy.decodingFrame} ${framePosition + 1} 帧…`);
       let nativeError = "";
@@ -525,7 +524,6 @@ function DecodedPreview({ bytes, analysis, selected, onSelect, onIntraModeDistri
             residualContext.fillStyle = "rgb(128,128,128)";
             residualContext.fillRect(0, 0, frame.width, frame.height);
           }
-          setPictureView("final");
           setDecoderBackend(frame.backend);
           setState("ready");
           setMessage("");
@@ -538,7 +536,6 @@ function DecodedPreview({ bytes, analysis, selected, onSelect, onIntraModeDistri
               context.fillRect(0, 0, residualElement.width, residualElement.height);
             }
             setResidualSummary({ available: false, coveredPixels: 0, totalPixels, intraPixels: 0, interPixels: 0 });
-            setPictureView("final");
           };
           if (!Number.isSafeInteger(totalPixels) || totalPixels > MAX_RESIDUAL_PIXELS || residualRegions.length === 0) {
             residualFailed();
@@ -562,7 +559,6 @@ function DecodedPreview({ bytes, analysis, selected, onSelect, onIntraModeDistri
             residualElement.getContext("2d")?.putImageData(new ImageData(residual.pixels, frame.width, frame.height), 0, 0);
             const residualAvailable = residual.coveredPixels > 0;
             setResidualSummary({ available: residualAvailable, coveredPixels: residual.coveredPixels, totalPixels, intraPixels: residual.intraPixels, interPixels: residual.interPixels });
-            if (!residualAvailable) setPictureView("final");
           })().catch(error => {
             if (!(error instanceof DOMException && error.name === "AbortError")) residualFailed();
           });
@@ -606,7 +602,6 @@ function DecodedPreview({ bytes, analysis, selected, onSelect, onIntraModeDistri
                 residualContext.fillRect(0, 0, residualElement.width, residualElement.height);
               }
               setResidualSummary({ available: false, coveredPixels: 0, totalPixels, intraPixels: 0, interPixels: 0 });
-              setPictureView("final");
             };
             rendered = true; setDecoderBackend("WebCodecs"); setState("ready"); setMessage("");
             if (!context || !Number.isSafeInteger(totalPixels) || totalPixels > MAX_RESIDUAL_PIXELS) {
@@ -620,7 +615,6 @@ function DecodedPreview({ bytes, analysis, selected, onSelect, onIntraModeDistri
                   residualCanvas.current.getContext("2d")?.putImageData(new ImageData(residual.pixels, element.width, element.height), 0, 0);
                   const residualAvailable = residual.coveredPixels > 0;
                   setResidualSummary({ available: residualAvailable, coveredPixels: residual.coveredPixels, totalPixels, intraPixels: residual.intraPixels, interPixels: residual.interPixels });
-                  if (!residualAvailable) setPictureView("final");
                 })
                 .catch(error => { if (!(error instanceof DOMException && error.name === "AbortError")) residualFailed(); });
             }
@@ -739,6 +733,7 @@ export default function Analyzer({ locale }: { locale: Locale }) {
   const [selected, setSelected] = useState<NalUnit | null>(null);
   const [busy, setBusy] = useState(false);
   const [sourceBytes, setSourceBytes] = useState<Uint8Array | null>(null);
+  const [sourceRevision, setSourceRevision] = useState(0);
   const [intraModeDistribution, setIntraModeDistribution] = useState<ModeDistribution | null>(null);
   const [interModeDistribution, setInterModeDistribution] = useState<ModeDistribution | null>(null);
 
@@ -748,7 +743,7 @@ export default function Analyzer({ locale }: { locale: Locale }) {
       validateFile(file, locale);
       const bytes = new Uint8Array(await file.arrayBuffer());
       const result = analyzeBitstream(bytes, file.name);
-      setAnalysis(result); setSourceBytes(bytes); setFileName(file.name); setSelected(result.units.find(unit => unit.keyFrame && unit.frameStart) ?? result.units.find(unit => unit.frameStart) ?? result.units[0] ?? null);
+      setAnalysis(result); setSourceBytes(bytes); setSourceRevision(revision => revision + 1); setFileName(file.name); setSelected(result.units.find(unit => unit.keyFrame && unit.frameStart) ?? result.units.find(unit => unit.frameStart) ?? result.units[0] ?? null);
     } catch (err) { setAnalysis(null); setSourceBytes(null); setError(err instanceof Error && [copy.invalidFile, copy.emptyFile, copy.fileTooLarge].includes(err.message) ? err.message : copy.parseFailed); }
     finally { setBusy(false); }
   };
@@ -771,7 +766,7 @@ export default function Analyzer({ locale }: { locale: Locale }) {
         <Stat label={copy.frameRate} value={analysis.sps?.fps ? `${analysis.sps.fps.toFixed(3)} fps` : "—"} note={analysis.sps?.fps ? (analysis.containerName === "IVF" ? copy.fromIvf : analysis.codecKind === "av1" ? copy.fromSequence : copy.fromVui) : copy.frameRateUndeclared} />
         <Stat label={copy.framesKeyframes} value={`${analysis.frameCount} / ${analysis.idrCount}`} note={analysis.duration ? `${copy.about} ${analysis.duration.toFixed(2)} ${copy.seconds}${analysis.declaredFrameCount !== undefined ? ` · ${copy.ivfDeclares} ${analysis.declaredFrameCount} ${copy.frames}` : ""}` : `${analysis.units.length} ${analysis.unitName} ${copy.units}`} />
       </section>
-      {sourceBytes && <DecodedPreview bytes={sourceBytes} analysis={analysis} selected={selected} onSelect={setSelected} onIntraModeDistributionChange={setIntraModeDistribution} onInterModeDistributionChange={setInterModeDistribution} locale={locale} />}
+      {sourceBytes && <DecodedPreview key={sourceRevision} bytes={sourceBytes} analysis={analysis} selected={selected} onSelect={setSelected} onIntraModeDistributionChange={setIntraModeDistribution} onInterModeDistributionChange={setInterModeDistribution} locale={locale} />}
       <section className="timeline-card">
         <div className="section-title"><div><span>02</span><h3>{analysis.unitName} {copy.timeline}</h3></div><small>{copy.timelineSync}</small></div>
         <div className="timeline" aria-label={`${analysis.unitName} ${copy.timelineAria}`}>{analysis.units.slice(0, 500).map(unit => { const typeName = localizeTypeName(unit.typeName, locale); return <button key={unit.index} title={`#${unit.index} ${typeName}`} aria-label={`${analysis.unitName} ${unit.index} ${typeName}`} className={selected?.index === unit.index ? "active" : ""} style={{ background: unitColor(unit.type, analysis.codecKind) }} onClick={() => setSelected(unit)} />; })}</div>
