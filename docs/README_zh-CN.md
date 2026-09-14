@@ -99,7 +99,7 @@ npm run desktop:dist:win # Windows x64 安装程序
 | `native/` | FFmpeg H.264 与 dav1d AV1 适配器 |
 | `public/` | 图片资源及带资源限制的 AV1 inspection Worker |
 | `tests/` | 解析器、解码器、导航、渲染和集成测试 |
-| `config/` | 桌面 Vite 与 Drizzle 配置 |
+| `config/` | 桌面 Vite 配置 |
 | `.artifacts/` | 已忽略的构建、原生工作文件、应用和安装包 |
 
 ## 当前限制

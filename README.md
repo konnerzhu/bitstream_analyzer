@@ -99,7 +99,7 @@ Generated files and installers are written below `.artifacts/`. Release builds u
 | `native/` | FFmpeg H.264 and dav1d AV1 adapters |
 | `public/` | Artwork and the bounded AV1 inspection worker |
 | `tests/` | Parser, decoder, navigation, rendering, and integration tests |
-| `config/` | Desktop Vite and Drizzle configuration |
+| `config/` | Desktop Vite configuration |
 | `.artifacts/` | Ignored builds, native work files, applications, and installers |
 
 ## Current limitations

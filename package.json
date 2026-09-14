@@ -19,19 +19,16 @@
     "desktop:renderer:build": "vite build --config config/vite.desktop.config.ts",
     "desktop:native:mac": "sh scripts/build-desktop-native-macos.sh",
     "desktop:native:win": "sh scripts/build-desktop-native-windows.sh",
-    "desktop:icon:mac": "sh scripts/build-macos-icon.sh",
-    "desktop:icon:win": "sh scripts/build-windows-icon.sh",
+    "desktop:icon": "sh scripts/build-desktop-icon.sh",
     "desktop:stage": "node scripts/stage-desktop-app.mjs",
-    "desktop:dist:mac": "npm run desktop:renderer:build && npm run desktop:native:mac && npm run desktop:icon:mac && npm run desktop:stage && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dmg zip --arm64",
-    "desktop:dist:win": "npm run desktop:renderer:build && npm run desktop:native:win && npm run desktop:icon:win && npm run desktop:stage && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win nsis --x64",
+    "desktop:dist:mac": "npm run desktop:renderer:build && npm run desktop:native:mac && npm run desktop:icon && npm run desktop:stage && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dmg zip --arm64",
+    "desktop:dist:win": "npm run desktop:renderer:build && npm run desktop:native:win && npm run desktop:icon && npm run desktop:stage && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win nsis --x64",
     "native:h264:configure": "cmake -S native/h264-inspector -B .artifacts/build/h264-inspector -DCMAKE_BUILD_TYPE=Release",
     "native:h264:build": "npm run native:h264:configure && cmake --build .artifacts/build/h264-inspector --parallel",
     "native:av1:configure": "cmake -S native/av1-decoder -B .artifacts/build/av1-decoder -DCMAKE_BUILD_TYPE=Release",
-    "native:av1:build": "npm run native:av1:configure && cmake --build .artifacts/build/av1-decoder --parallel",
-    "db:generate": "drizzle-kit generate:sqlite --config config/drizzle.config.ts"
+    "native:av1:build": "npm run native:av1:configure && cmake --build .artifacts/build/av1-decoder --parallel"
   },
   "dependencies": {
-    "drizzle-orm": "0.45.2",
     "react": "19.2.6",
     "react-dom": "19.2.6"
   },
@@ -46,7 +43,6 @@
     "@types/react-dom": "19.2.3",
     "@vitejs/plugin-react": "6.0.2",
     "@vitejs/plugin-rsc": "^0.5.34",
-    "drizzle-kit": "^0.18.1",
     "electron": "44.3.0",
     "electron-builder": "26.15.3",
     "eslint": "9.39.4",
@@ -59,8 +55,7 @@
     "typescript": "5.9.3",
     "typescript-eslint": "8.59.3",
     "vinext": "^1.0.0-beta.9",
-    "vite": "^8.2.2",
-    "wrangler": "4.92.0"
+    "vite": "^8.2.2"
   },
   "type": "module",
   "build": {

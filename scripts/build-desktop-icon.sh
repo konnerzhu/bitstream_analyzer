@@ -6,4 +6,4 @@ icon="$project_root/.artifacts/build/icon.svg"
 
 mkdir -p "$(dirname "$icon")"
 cp "$project_root/public/favicon.svg" "$icon"
-echo "Prepared Windows application icon at $icon"
+echo "Prepared desktop application icon at $icon"
