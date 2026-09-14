@@ -6,7 +6,8 @@ import { H264SubblockAnalysis, analyzeH264Subblocks } from "./h264-subblocks";
 import { Av1LeafBlock, Av1SubblockAnalysis, inspectAv1Subblocks } from "./av1-subblocks";
 import { Locale, getCopy, localizeAv1IntraModeName, localizeBlockName, localizeH264IntraModeName, localizeParameterSetName, localizeTypeName } from "./i18n";
 import { PicturePoint, clampPicturePan, navigationViewport, shouldStartPicturePan, zoomAroundPoint } from "./picture-navigation";
-import { MAX_RESIDUAL_PIXELS, MAX_RESIDUAL_REGIONS, ResidualRegion, buildResidualImage, scaleResidualRegions } from "./residual";
+import { MAX_RESIDUAL_PIXELS, MAX_RESIDUAL_REGIONS, ResidualRegion, scaleResidualRegions } from "./residual";
+import { buildResidualImageInWorker } from "./residual-client";
 import { decodeNativeFrame, drawNativeFrame, nativeDecoderAvailable } from "./native-decoder";
 
 const MAX_FILE_SIZE = 200 * 1024 * 1024;
@@ -505,6 +506,7 @@ function DecodedPreview({ bytes, analysis, selected, onSelect, onIntraModeDistri
     if (!target || unavailableMessage) return;
     const decode = async () => {
       setResidualSummary(null);
+      setPictureView("final");
       setDecoderBackend("");
       setState("decoding"); setMessage(locale === "en" ? `${copy.decodingFrame} ${framePosition + 1}…` : `${copy.decodingFrame} ${framePosition + 1} 帧…`);
       let nativeError = "";
@@ -512,19 +514,58 @@ function DecodedPreview({ bytes, analysis, selected, onSelect, onIntraModeDistri
         try {
           const frame = await decodeNativeFrame(analysis.codecKind, bytes, framePosition, nativeController.signal);
           if (cancelled || !canvas.current || !residualCanvas.current) return;
-          drawNativeFrame(canvas.current, frame);
-          residualCanvas.current.width = frame.width;
-          residualCanvas.current.height = frame.height;
-          const residualContext = residualCanvas.current.getContext("2d");
+          const element = canvas.current;
+          const residualElement = residualCanvas.current;
+          drawNativeFrame(element, frame);
+          residualElement.width = frame.width;
+          residualElement.height = frame.height;
+          const totalPixels = frame.width * frame.height;
+          const residualContext = residualElement.getContext("2d");
           if (residualContext) {
             residualContext.fillStyle = "rgb(128,128,128)";
             residualContext.fillRect(0, 0, frame.width, frame.height);
           }
           setPictureView("final");
-          setResidualSummary({ available: false, coveredPixels: 0, totalPixels: frame.width * frame.height, intraPixels: 0, interPixels: 0 });
           setDecoderBackend(frame.backend);
           setState("ready");
           setMessage("");
+
+          const residualFailed = () => {
+            if (cancelled || canvas.current !== element || residualCanvas.current !== residualElement) return;
+            const context = residualElement.getContext("2d");
+            if (context) {
+              context.fillStyle = "rgb(128,128,128)";
+              context.fillRect(0, 0, residualElement.width, residualElement.height);
+            }
+            setResidualSummary({ available: false, coveredPixels: 0, totalPixels, intraPixels: 0, interPixels: 0 });
+            setPictureView("final");
+          };
+          if (!Number.isSafeInteger(totalPixels) || totalPixels > MAX_RESIDUAL_PIXELS || residualRegions.length === 0) {
+            residualFailed();
+            return;
+          }
+
+          const scaledRegions = scaleResidualRegions(residualRegions, frame.width / analysis.sps!.width, frame.height / analysis.sps!.height);
+          void (async () => {
+            let previousSource: HTMLCanvasElement | null = null;
+            const needsPreviousFrame = scaledRegions.some(region => region.kind === "inter");
+            if (needsPreviousFrame && framePosition > 0) {
+              const previousFrame = await decodeNativeFrame(analysis.codecKind, bytes, framePosition - 1, nativeController.signal);
+              if (cancelled) return;
+              if (previousFrame.width === frame.width && previousFrame.height === frame.height) {
+                previousSource = document.createElement("canvas");
+                drawNativeFrame(previousSource, previousFrame);
+              }
+            }
+            const residual = await buildResidualImageInWorker(element, previousSource, frame.width, frame.height, scaledRegions, residualGain, nativeController.signal);
+            if (cancelled || canvas.current !== element || residualCanvas.current !== residualElement) return;
+            residualElement.getContext("2d")?.putImageData(new ImageData(residual.pixels, frame.width, frame.height), 0, 0);
+            const residualAvailable = residual.coveredPixels > 0;
+            setResidualSummary({ available: residualAvailable, coveredPixels: residual.coveredPixels, totalPixels, intraPixels: residual.intraPixels, interPixels: residual.interPixels });
+            if (!residualAvailable) setPictureView("final");
+          })().catch(error => {
+            if (!(error instanceof DOMException && error.name === "AbortError")) residualFailed();
+          });
           return;
         } catch (error) {
           if (cancelled || nativeController.signal.aborted) return;
@@ -557,19 +598,8 @@ function DecodedPreview({ bytes, analysis, selected, onSelect, onIntraModeDistri
             residualElement.width = element.width;
             residualElement.height = element.height;
             const totalPixels = element.width * element.height;
-            try {
-              if (!context) throw new Error(copy.residualUnavailable);
-              if (!Number.isSafeInteger(totalPixels) || totalPixels > MAX_RESIDUAL_PIXELS) throw new Error(copy.residualUnavailable);
-              const currentPixels = context.getImageData(0, 0, element.width, element.height).data;
-              const previousContext = previousCanvas.width === element.width && previousCanvas.height === element.height ? previousCanvas.getContext("2d", { willReadFrequently: true }) : null;
-              const previousPixels = previousContext?.getImageData(0, 0, element.width, element.height).data ?? null;
-              const scaledRegions = scaleResidualRegions(residualRegions, element.width / analysis.sps!.width, element.height / analysis.sps!.height);
-              const residual = buildResidualImage(currentPixels, previousPixels, element.width, element.height, scaledRegions, residualGain);
-              residualElement.getContext("2d")?.putImageData(new ImageData(residual.pixels, element.width, element.height), 0, 0);
-              const residualAvailable = residual.coveredPixels > 0;
-              setResidualSummary({ available: residualAvailable, coveredPixels: residual.coveredPixels, totalPixels, intraPixels: residual.intraPixels, interPixels: residual.interPixels });
-              if (!residualAvailable) setPictureView("final");
-            } catch {
+            const residualFailed = () => {
+              if (cancelled) return;
               const residualContext = residualElement.getContext("2d");
               if (residualContext) {
                 residualContext.fillStyle = "rgb(128,128,128)";
@@ -577,8 +607,23 @@ function DecodedPreview({ bytes, analysis, selected, onSelect, onIntraModeDistri
               }
               setResidualSummary({ available: false, coveredPixels: 0, totalPixels, intraPixels: 0, interPixels: 0 });
               setPictureView("final");
-            }
+            };
             rendered = true; setDecoderBackend("WebCodecs"); setState("ready"); setMessage("");
+            if (!context || !Number.isSafeInteger(totalPixels) || totalPixels > MAX_RESIDUAL_PIXELS) {
+              residualFailed();
+            } else {
+              const previousSource = previousCanvas.width === element.width && previousCanvas.height === element.height ? previousCanvas : null;
+              const scaledRegions = scaleResidualRegions(residualRegions, element.width / analysis.sps!.width, element.height / analysis.sps!.height);
+              void buildResidualImageInWorker(element, previousSource, element.width, element.height, scaledRegions, residualGain, nativeController.signal)
+                .then(residual => {
+                  if (cancelled || !residualCanvas.current) return;
+                  residualCanvas.current.getContext("2d")?.putImageData(new ImageData(residual.pixels, element.width, element.height), 0, 0);
+                  const residualAvailable = residual.coveredPixels > 0;
+                  setResidualSummary({ available: residualAvailable, coveredPixels: residual.coveredPixels, totalPixels, intraPixels: residual.intraPixels, interPixels: residual.interPixels });
+                  if (!residualAvailable) setPictureView("final");
+                })
+                .catch(error => { if (!(error instanceof DOMException && error.name === "AbortError")) residualFailed(); });
+            }
           }
           frame.close();
         },
@@ -666,7 +711,7 @@ function DecodedPreview({ bytes, analysis, selected, onSelect, onIntraModeDistri
       <input type="range" min="0" max={Math.max(0, frames.length - 1)} value={framePosition} onChange={event => onSelect(frames[Number(event.target.value)])} aria-label={copy.selectFrame} />
       <button disabled={framePosition >= frames.length - 1} onClick={() => onSelect(frames[framePosition + 1])}>{copy.nextFrame}</button>
     </div>
-    <p className={`residual-note ${residualSummary?.available ? "available" : ""}`}>{residualSummary?.available ? `${copy.residualApproximation} · ${copy.residualCoverage} ${Math.round(residualSummary.coveredPixels / Math.max(1, residualSummary.totalPixels) * 100)}% · ${copy.residualComposition} I ${residualSummary.intraPixels.toLocaleString(locale)} / P ${residualSummary.interPixels.toLocaleString(locale)} · ${residualGain}×` : copy.residualUnavailable}</p>
+    <p className={`residual-note ${residualSummary?.available ? "available" : ""}`} aria-live="polite">{residualSummary?.available ? `${copy.residualApproximation} · ${copy.residualCoverage} ${Math.round(residualSummary.coveredPixels / Math.max(1, residualSummary.totalPixels) * 100)}% · ${copy.residualComposition} I ${residualSummary.intraPixels.toLocaleString(locale)} / P ${residualSummary.interPixels.toLocaleString(locale)} · ${residualGain}×` : residualSummary === null && residualRegions.length > 0 ? copy.residualComputing : copy.residualUnavailable}</p>
     <div className="macroblock-toolbar"><div className="overlay-toggles"><button className={showMacroblocks ? "active" : ""} aria-pressed={showMacroblocks} onClick={() => setShowMacroblocks(value => !value)}><i />{blockGridLabel} {showMacroblocks ? "ON" : "OFF"}</button>{(analysis.codecKind === "av1" || analysis.codecKind === "h264") && <><button className={showIntraModes ? "active" : ""} aria-pressed={showIntraModes} disabled={!showMacroblocks || !intraModesAvailable} onClick={() => setShowIntraModes(value => !value)}><i />{copy.intraModes} {showIntraModes ? "ON" : "OFF"}</button><button className={showInterModes ? "active inter" : ""} aria-pressed={showInterModes} disabled={!showMacroblocks || !interModesAvailable} onClick={() => setShowInterModes(value => !value)}><i />{copy.interModes} {showInterModes ? "ON" : "OFF"}</button></>}</div><span>{analysis.codecKind === "h264" && h264Subblocks ? `${h264Subblocks.entropyMode ?? "H.264"} · ${h264StatusMessage}${showMacroblocks && showIntraModes && h264IntraModesAvailable ? ` · ${copy.directionOverlay}` : ""}${showMacroblocks && showInterModes && h264InterModesAvailable ? ` · ${copy.motionOverlay}` : ""}` : analysis.codecKind === "av1" ? (av1SubblocksLoading ? copy.entropyDecodingAv1 : `${av1StatusMessage}${showMacroblocks && showIntraModes && av1Subblocks?.status === "ready" ? ` · ${copy.directionOverlay}` : ""}${showMacroblocks && showInterModes && interModesAvailable ? ` · ${copy.motionOverlay}` : ""}`) : `${macroblockColumns} × ${macroblockRows} ${blockSize}×${blockSize} ${copy.lumaBlocks} · ${copy.clickToSelect}`}</span></div>
     {showMacroblocks && macroblockCount > 0 && <div className="macroblock-info">
       <div><span>{blockName} {copy.address}</span><strong>#{macroblockAddress}</strong><small>{copy.rasterOrder}</small></div>
