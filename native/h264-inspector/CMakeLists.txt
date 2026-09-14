@@ -15,6 +15,7 @@ target_compile_features(bitscope_h264_inspector PUBLIC cxx_std_20)
 
 add_executable(bitscope-h264-inspect src/main.cpp)
 target_link_libraries(bitscope-h264-inspect PRIVATE bitscope_h264_inspector)
+target_include_directories(bitscope-h264-inspect PRIVATE ../common)
 
 install(TARGETS bitscope_h264_inspector bitscope-h264-inspect
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}

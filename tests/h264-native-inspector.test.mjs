@@ -1,9 +1,13 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
+
+const require = createRequire(import.meta.url);
+const { decodeNativeFrame } = require("../desktop/native-runner.cjs");
 
 function commandAvailable(command, args) {
   const result = spawnSync(command, args, { stdio: "ignore" });
@@ -59,8 +63,32 @@ test(
       assert.ok(frames[1].motionVectors > 0);
       assert.equal(summary.frames, 2);
       assert.ok(summary.motionVectors > 0);
-      assert.equal(summary.abiVersion, 1);
+      assert.equal(summary.abiVersion, 2);
       assert.equal(summary.availableStages, 3);
+
+      const packedPath = join(output, "selected.planes");
+      const selectedRecords = execFileSync(executable, ["--frame", "1", "--output", packedPath, fixture], {
+        encoding: "utf8",
+        maxBuffer: 1024 * 1024,
+      }).trim().split("\n").map(line => JSON.parse(line));
+      const selected = selectedRecords.find(item => item.type === "selectedFrame");
+      const packed = await readFile(packedPath);
+      assert.equal(selected.index, 1);
+      assert.equal(selected.bitDepth, 8);
+      assert.equal(selected.byteLength, packed.byteLength);
+      assert.equal(selected.planes.length, 3);
+
+      process.env.BITSCOPE_H264_DECODER = executable;
+      try {
+        const bridged = await decodeNativeFrame({ codec: "h264", frameIndex: 1, bytes: await loadPFrameFixture() }, {
+          isPackaged: false, projectRoot: resolve("."), resourcesPath: "",
+        });
+        assert.equal(bridged.backend, "FFmpeg");
+        assert.equal(bridged.index, 1);
+        assert.equal(bridged.data.byteLength, selected.byteLength);
+      } finally {
+        delete process.env.BITSCOPE_H264_DECODER;
+      }
 
       assert.throws(
         () => execFileSync(executable, [invalid], { encoding: "utf8", stdio: "pipe" }),

@@ -8,7 +8,15 @@
 extern "C" {
 #endif
 
-#define BITSCOPE_H264_INSPECTOR_ABI_VERSION 1u
+#define BITSCOPE_H264_INSPECTOR_ABI_VERSION 2u
+
+enum BitscopeH264PixelLayout {
+  BITSCOPE_H264_PIXEL_I400 = 0,
+  BITSCOPE_H264_PIXEL_I420 = 1,
+  BITSCOPE_H264_PIXEL_I422 = 2,
+  BITSCOPE_H264_PIXEL_I444 = 3,
+  BITSCOPE_H264_PIXEL_UNSUPPORTED = 255
+};
 
 enum BitscopeH264InspectionStage {
   BITSCOPE_H264_STAGE_FINAL_PIXELS = 1u << 0,
@@ -101,6 +109,11 @@ typedef struct BitscopeH264Frame {
   uint32_t motion_vector_count;
   const BitscopeH264TransformBlock* transform_blocks;
   uint32_t transform_block_count;
+  int32_t color_range;
+  int32_t matrix_coefficients;
+  uint8_t bit_depth;
+  uint8_t pixel_layout;
+  uint8_t reserved_v2[2];
 } BitscopeH264Frame;
 
 typedef int (*BitscopeH264FrameCallback)(const BitscopeH264Frame* frame, void* user_data);

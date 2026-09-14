@@ -16,6 +16,14 @@ build/h264-inspector/bitscope-h264-inspect sample.h264
 
 The CLI writes newline-delimited JSON frame summaries. Applications should link the static adapter and consume the callback API in `include/bitscope_h264_inspector.h`; pixel pointers are callback-scoped and must not be retained.
 
+The desktop bridge uses the CLI's bounded selected-frame export mode:
+
+```bash
+build/h264-inspector/bitscope-h264-inspect --frame 0 --output frame.planes sample.h264
+```
+
+The output contains tightly packed planar samples; the `selectedFrame` JSON record describes plane offsets, dimensions, bit depth, range, matrix and byte order. ABI v2 adds that color/layout metadata without exposing decoder-owned pointers outside the callback.
+
 ## Next inspection hooks
 
 1. Add an FFmpeg patch at the H.264 inverse-transform/reconstruction boundary.

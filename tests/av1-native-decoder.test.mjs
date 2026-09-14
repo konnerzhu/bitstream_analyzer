@@ -1,9 +1,13 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
+
+const require = createRequire(import.meta.url);
+const { decodeNativeFrame } = require("../desktop/native-runner.cjs");
 
 // 32x32, one AV1 key frame plus one inter frame in IVF. Generated with FFmpeg/libaom-av1.
 const IVF_FIXTURE = "REtJRgAAIABBVjAxIAAgAAEAAAABAAAAAgAAAAAAAAAkAAAAAAAAAAAAAAASAAoKAAAAAif+bXyAIDIUEADBAAACgAAAAuXXNjbWvSQQXKgVAAAAAQAAAAAAAAASADIRMAPAgAAABtAAAAKAACAAjHA=";
@@ -79,6 +83,30 @@ test(
         assert.equal(summary.keyFrames, 1);
         assert.equal(summary.abiVersion, 1);
         assert.equal(summary.availableStages, 1);
+      }
+
+      const packedPath = join(output, "selected.planes");
+      const selectedRecords = execFileSync(executable, ["--frame", "1", "--output", packedPath, ivfPath], {
+        encoding: "utf8",
+        maxBuffer: 1024 * 1024,
+      }).trim().split("\n").map(line => JSON.parse(line));
+      const selected = selectedRecords.find(item => item.type === "selectedFrame");
+      const packed = await readFile(packedPath);
+      assert.equal(selected.index, 1);
+      assert.equal(selected.bitDepth, 8);
+      assert.equal(selected.byteLength, packed.byteLength);
+      assert.equal(selected.planes.length, 3);
+
+      process.env.BITSCOPE_AV1_DECODER = executable;
+      try {
+        const bridged = await decodeNativeFrame({ codec: "av1", frameIndex: 1, bytes: ivf }, {
+          isPackaged: false, projectRoot: resolve("."), resourcesPath: "",
+        });
+        assert.equal(bridged.backend, "dav1d");
+        assert.equal(bridged.index, 1);
+        assert.equal(bridged.data.byteLength, selected.byteLength);
+      } finally {
+        delete process.env.BITSCOPE_AV1_DECODER;
       }
 
       assert.throws(

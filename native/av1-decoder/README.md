@@ -16,6 +16,14 @@ build/av1-decoder/bitscope-av1-decode sample.ivf
 
 The CLI writes newline-delimited JSON frame summaries. Applications should link the static adapter and consume `include/bitscope_av1_decoder.h`. Plane pointers are callback-scoped and must not be retained.
 
+The desktop bridge uses the CLI's bounded selected-frame export mode:
+
+```bash
+build/av1-decoder/bitscope-av1-decode --frame 0 --output frame.planes sample.ivf
+```
+
+The output contains tightly packed planar samples; the `selectedFrame` JSON record describes plane offsets, dimensions, bit depth, range, matrix and byte order.
+
 ## Inspection boundary
 
 dav1d provides final decoded pictures, frame/sequence headers, color metadata, spatial and temporal IDs, and film-grain control through its public API. It does not expose per-block motion vectors, prediction buffers, transform coefficients, or residual planes. The existing libaom inspection Worker remains the source for AV1 block syntax until equivalent internal dav1d hooks are maintained.

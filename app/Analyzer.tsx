@@ -7,6 +7,7 @@ import { Av1LeafBlock, Av1SubblockAnalysis, inspectAv1Subblocks } from "./av1-su
 import { Locale, getCopy, localizeAv1IntraModeName, localizeBlockName, localizeH264IntraModeName, localizeParameterSetName, localizeTypeName } from "./i18n";
 import { PicturePoint, clampPicturePan, navigationViewport, shouldStartPicturePan, zoomAroundPoint } from "./picture-navigation";
 import { MAX_RESIDUAL_PIXELS, MAX_RESIDUAL_REGIONS, ResidualRegion, buildResidualImage, scaleResidualRegions } from "./residual";
+import { decodeNativeFrame, drawNativeFrame, nativeDecoderAvailable } from "./native-decoder";
 
 const MAX_FILE_SIZE = 200 * 1024 * 1024;
 const MAX_INTRA_MODE_SAMPLES = 1_000_000;
@@ -176,6 +177,7 @@ function DecodedPreview({ bytes, analysis, selected, onSelect, onIntraModeDistri
   const frameStage = useRef<HTMLDivElement>(null);
   const [state, setState] = useState<"decoding" | "ready" | "unsupported" | "error">("decoding");
   const [message, setMessage] = useState(copy.decoderInitializing);
+  const [decoderBackend, setDecoderBackend] = useState("");
   const [showMacroblocks, setShowMacroblocks] = useState(true);
   const [showIntraModes, setShowIntraModes] = useState(true);
   const [showInterModes, setShowInterModes] = useState(true);
@@ -241,7 +243,8 @@ function DecodedPreview({ bytes, analysis, selected, onSelect, onIntraModeDistri
   const parameterSetName = localizeParameterSetName(analysis.parameterSetName, locale);
   const h264StatusMessage = h264Subblocks ? locale === "en" ? `${h264Subblocks.parsedCount.toLocaleString("en-US")} macroblocks parsed${h264Subblocks.status === "partial" ? " · partial result" : ""}` : h264Subblocks.message : "";
   const av1StatusMessage = av1Subblocks?.status === "ready" ? locale === "en" ? `libaom inspection · ${av1Subblocks.blocks.length.toLocaleString("en-US")} entropy-decoded leaf blocks` : av1Subblocks.message : av1Subblocks ? locale === "en" ? "AV1 leaf-block inspection is unavailable for this file" : av1Subblocks.message : copy.waitingForAv1;
-  const unavailableMessage = analysis.codecKind === "h266" ? copy.vvcUnsupported : !analysis.sps ? `${copy.missingDecoderConfig} ${parameterSetName}` : typeof VideoDecoder === "undefined" ? copy.webCodecsUnsupported : "";
+  const nativeAvailable = nativeDecoderAvailable(analysis.codecKind, bytes.byteLength);
+  const unavailableMessage = analysis.codecKind === "h266" ? copy.vvcUnsupported : !analysis.sps ? `${copy.missingDecoderConfig} ${parameterSetName}` : !nativeAvailable && typeof VideoDecoder === "undefined" ? copy.webCodecsUnsupported : "";
 
   useEffect(() => {
     onIntraModeDistributionChange(intraModeDistribution);
@@ -497,13 +500,40 @@ function DecodedPreview({ bytes, analysis, selected, onSelect, onIntraModeDistri
   useEffect(() => {
     let cancelled = false;
     let decoder: VideoDecoder | null = null;
+    const nativeController = new AbortController();
     if (!target || unavailableMessage) return;
     const decode = async () => {
       setResidualSummary(null);
+      setDecoderBackend("");
       setState("decoding"); setMessage(locale === "en" ? `${copy.decodingFrame} ${framePosition + 1}…` : `${copy.decodingFrame} ${framePosition + 1} 帧…`);
+      let nativeError = "";
+      if (nativeAvailable && (analysis.codecKind === "h264" || analysis.codecKind === "av1")) {
+        try {
+          const frame = await decodeNativeFrame(analysis.codecKind, bytes, framePosition, nativeController.signal);
+          if (cancelled || !canvas.current || !residualCanvas.current) return;
+          drawNativeFrame(canvas.current, frame);
+          residualCanvas.current.width = frame.width;
+          residualCanvas.current.height = frame.height;
+          const residualContext = residualCanvas.current.getContext("2d");
+          if (residualContext) {
+            residualContext.fillStyle = "rgb(128,128,128)";
+            residualContext.fillRect(0, 0, frame.width, frame.height);
+          }
+          setPictureView("final");
+          setResidualSummary({ available: false, coveredPixels: 0, totalPixels: frame.width * frame.height, intraPixels: 0, interPixels: 0 });
+          setDecoderBackend(frame.backend);
+          setState("ready");
+          setMessage("");
+          return;
+        } catch (error) {
+          if (cancelled || nativeController.signal.aborted) return;
+          nativeError = error instanceof Error ? error.message : `${analysis.codecName} ${copy.decodeFailed}`;
+        }
+      }
+      if (typeof VideoDecoder === "undefined") throw new Error(nativeError || copy.webCodecsUnsupported);
       const config: VideoDecoderConfig = { codec: analysis.sps!.codec, codedWidth: analysis.sps!.width, codedHeight: analysis.sps!.height, optimizeForLatency: true };
       const support = await VideoDecoder.isConfigSupported(config);
-      if (!support.supported) throw new Error(`${copy.browserCodecUnsupported} ${analysis.sps!.codec}`);
+      if (!support.supported) throw new Error(nativeError || `${copy.browserCodecUnsupported} ${analysis.sps!.codec}`);
       const targetTimestamp = target.timestamp ?? Math.round(framePosition * 1_000_000 / (analysis.sps!.fps ?? 30));
       let rendered = false;
       let previousTimestamp = Number.NEGATIVE_INFINITY;
@@ -547,7 +577,7 @@ function DecodedPreview({ bytes, analysis, selected, onSelect, onIntraModeDistri
               setResidualSummary({ available: false, coveredPixels: 0, totalPixels, intraPixels: 0, interPixels: 0 });
               setPictureView("final");
             }
-            rendered = true; setState("ready"); setMessage("");
+            rendered = true; setDecoderBackend("WebCodecs"); setState("ready"); setMessage("");
           }
           frame.close();
         },
@@ -589,14 +619,14 @@ function DecodedPreview({ bytes, analysis, selected, onSelect, onIntraModeDistri
       if (!cancelled && !rendered) throw new Error(copy.targetNotRendered);
     };
     decode().catch(error => { if (!cancelled) { setState("error"); setMessage(error instanceof Error ? error.message : `${analysis.codecName} ${copy.decodeFailed}`); } });
-    return () => { cancelled = true; if (decoder && decoder.state !== "closed") decoder.close(); };
-  }, [analysis, bytes, copy, framePosition, frames, locale, residualGain, residualRegions, target, unavailableMessage]);
+    return () => { cancelled = true; nativeController.abort(); if (decoder && decoder.state !== "closed") decoder.close(); };
+  }, [analysis, bytes, copy, framePosition, frames, locale, nativeAvailable, residualGain, residualRegions, target, unavailableMessage]);
 
   const displayState = unavailableMessage || !target ? "unsupported" : state;
   const displayMessage = unavailableMessage || (!target ? copy.noDecodableFrames : message);
 
   return <section className="decode-card">
-    <div className="section-title"><div><span>01</span><h3>{copy.decodedPicture}</h3></div><small>{target ? `FRAME ${framePosition + 1} / ${frames.length} · ${analysis.unitName} #${target.index}` : copy.noFrame}</small></div>
+    <div className="section-title"><div><span>01</span><h3>{copy.decodedPicture}</h3></div><small>{target ? `FRAME ${framePosition + 1} / ${frames.length} · ${analysis.unitName} #${target.index}${decoderBackend ? ` · ${decoderBackend}` : ""}` : copy.noFrame}</small></div>
     <div ref={canvasWrap} className={`canvas-wrap ${zoom > 1 ? "zoomed" : ""} ${panning ? "panning" : ""}`} title={copy.wheelZoom} onPointerDown={beginPan} onPointerMove={movePan} onPointerUp={endPan} onPointerCancel={endPan}>
       <div ref={frameStage} className="frame-stage" style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }}>
         <canvas ref={canvas} className={`picture-canvas ${pictureView === "final" ? "visible" : ""}`} aria-label={copy.decodedCanvas} />

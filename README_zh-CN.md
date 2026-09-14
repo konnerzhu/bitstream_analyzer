@@ -83,6 +83,16 @@ npm run dev
 
 打开 [http://localhost:3000](http://localhost:3000)，将受支持的裸码流拖入页面，或从磁盘选择文件。
 
+### 原生桌面开发模式
+
+安装 FFmpeg 与 dav1d 开发库后，启动 Electron 宿主：
+
+```bash
+npm run desktop:dev
+```
+
+该命令会构建两个原生适配器、启动或复用本地 UI 服务，并通过受限的原生解码桥打开同一套界面。H.264 画面由 FFmpeg 解码，AV1 画面由 dav1d 解码；原生桥或解码器不可用时自动回退到 WebCodecs。
+
 > [!IMPORTANT]
 > 以上是开发环境命令。无需安装 Node.js 的独立桌面 GUI 安装包已经列入计划，但目前尚未发布。
 
@@ -106,6 +116,7 @@ npm run dev
 | `app/h264-subblocks.ts` | 带边界保护的 H.264 SPS/PPS/Slice 与 CAVLC 宏块/子分区解析 |
 | `native/h264-inspector/` | 基于 FFmpeg 的 H.264 原生解码适配器、检查 ABI 与 JSONL 诊断 CLI |
 | `native/av1-decoder/` | 基于 dav1d 的 AV1 IVF/OBU 解码适配器、检查 ABI 与 JSONL 诊断 CLI |
+| `desktop/` | 沙箱化 Electron 宿主、受限 IPC preload 与有资源上限的原生解码执行器 |
 | `app/analyzer.css` | 响应式分析界面与视觉样式 |
 | `public/` | 项目与应用图片资源 |
 
@@ -117,6 +128,7 @@ npm run build    # 生成生产构建
 npm run lint     # 执行静态检查
 npm run native:h264:build  # 构建可选的原生 H.264 适配器
 npm run native:av1:build   # 构建可选的原生 AV1/dav1d 适配器
+npm run desktop:dev        # 构建原生适配器并打开桌面 GUI
 ```
 
 项目使用 TypeScript、React 19 和 vinext 开发。解析和解码逻辑有意保留在客户端，以便未来复用到桌面应用中。
@@ -125,18 +137,18 @@ npm run native:av1:build   # 构建可选的原生 AV1/dav1d 适配器
 
 第一阶段原生解码后端位于 `native/h264-inspector`。它通过带资源上限、版本化的 C ABI 包装 libavcodec，并对每个解码帧调用观察者回调。当前回调可提供真实的最终 YUV 平面与 FFmpeg 导出的运动矢量。ABI 已为预测像素、有符号残差、变换系数和去块滤波前像素预留槽位及能力位；在固定版本的 FFmpeg 分支加入对应重建路径钩子以前，这些能力位保持关闭。
 
-该原生适配器目前尚未接入浏览器产物。后续桌面 GUI 和 Emscripten Worker 将共用这层 C ABI。依赖、直接 CMake 命令及发行许可证要求见 `native/h264-inspector/README.md`。
+Electron 桌面宿主现已通过受限 IPC 桥把该 ABI 接入解码画布。普通浏览器路由仍使用 WebCodecs。依赖、直接 CMake 命令及发行许可证要求见 `native/h264-inspector/README.md`。
 
 ### 原生 AV1 解码后端
 
 `native/av1-decoder` 通过另一层带资源上限、版本化的 C ABI 包装 dav1d 1.5.1 或更高版本。它支持 IVF 与裸 low-overhead OBU 输入，可提供真实解码 YUV 平面、8/10/12-bit 布局、帧类型、显示尺寸、时间戳、空间/时间层、色彩元数据及显式 Film Grain 控制。为便于检查重建结果，默认关闭 Film Grain。
 
-该解码器是对 libaom inspection Worker 的补充，而不是替代：dav1d 提供真实解码画面，libaom 当前继续提供逐块划分、模式、变换及运动矢量矩阵。浏览器/桌面端接入属于下一阶段。
+该解码器是对 libaom inspection Worker 的补充，而不是替代：dav1d 为桌面 GUI 提供真实解码画面，libaom 继续提供逐块划分、模式、变换及运动矢量矩阵。
 
 ## 已知限制
 
 - 当前支持 Annex-B NAL 裸码流、低开销 AV1 OBU 和 AV1 IVF；尚不包含通用容器解复用。
-- 解码结果取决于浏览器、操作系统以及可用的 AVC/HEVC/AV1 编解码实现；VVC 仅支持分析。
+- 浏览器画面依赖 WebCodecs 与操作系统可用的编解码实现。桌面宿主的 H.264 使用 FFmpeg、AV1 使用 dav1d；HEVC 仍使用 WebCodecs，VVC 仅支持分析。
 - 浏览器端 H.264 子块解析当前支持逐行 8-bit 4:2:0 CAVLC I/P Slice，包括亮度帧内预测模式和 List-0 运动矢量；DC 与 Plane 会标记为非方向模式。CABAC、B Slice、FMO、隔行/MBAFF 和残差系数数值会明确显示为不支持，不会通过推测填充。
 - 原生 H.264 适配器当前导出最终解码像素和运动矢量。真实预测、残差、系数和去块滤波前画面需要后续补丁解码器钩子，不会从最终画面反推生成。
 - 原生 AV1/dav1d 适配器当前导出最终像素与帧元数据。dav1d 公共 API 不提供逐块残差、系数、预测或运动矢量矩阵，因此这些覆盖层仍由 libaom inspection 提供。
@@ -152,6 +164,7 @@ npm run native:av1:build   # 构建可选的原生 AV1/dav1d 适配器
 - [x] 解析 H.264 CAVLC I/P 宏块类型和真实分区
 - [x] 使用稳定的帧/运动矢量检查 ABI 包装原生 FFmpeg H.264 解码器
 - [x] 使用稳定的 IVF/OBU 帧检查 ABI 包装原生 dav1d AV1 解码器
+- [x] 将原生 H.264/dav1d 适配器接入桌面 GUI，并保留 WebCodecs 回退
 - [ ] 在固定版本 FFmpeg 中加入 H.264 预测、残差、系数和去块滤波前像素钩子
 - [ ] 支持 H.264 CABAC/B Slice 浏览器语法解析和参考帧详情
 - [ ] 支持 MP4/MKV/MPEG-TS 解复用和 AVCC 转换

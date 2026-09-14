@@ -15,6 +15,7 @@ target_compile_features(bitscope_av1_decoder PUBLIC cxx_std_20)
 
 add_executable(bitscope-av1-decode src/main.cpp)
 target_link_libraries(bitscope-av1-decode PRIVATE bitscope_av1_decoder)
+target_include_directories(bitscope-av1-decode PRIVATE ../common)
 
 install(TARGETS bitscope_av1_decoder bitscope-av1-decode
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}

@@ -148,6 +148,8 @@ int InspectFrame(const AVFrame* decoded, DecodeState* state, std::string* error)
   frame.available_stages = kAvailableStages;
   frame.motion_vectors = state->motion_vectors.empty() ? nullptr : state->motion_vectors.data();
   frame.motion_vector_count = static_cast<uint32_t>(state->motion_vectors.size());
+  frame.color_range = decoded->color_range;
+  frame.matrix_coefficients = decoded->colorspace;
 
   const AVPixFmtDescriptor* descriptor = av_pix_fmt_desc_get(static_cast<AVPixelFormat>(decoded->format));
   for (uint32_t plane = 0; plane < 4 && decoded->data[plane] != nullptr; ++plane) {
@@ -159,6 +161,16 @@ int InspectFrame(const AVFrame* decoded, DecodeState* state, std::string* error)
         (frame.width + (1u << horizontal_shift) - 1u) >> horizontal_shift,
         (frame.height + (1u << vertical_shift) - 1u) >> vertical_shift};
     frame.final_plane_count = static_cast<uint8_t>(plane + 1);
+  }
+  if (descriptor != nullptr && descriptor->nb_components > 0) {
+    frame.bit_depth = static_cast<uint8_t>(descriptor->comp[0].depth);
+    if (frame.final_plane_count == 1) frame.pixel_layout = BITSCOPE_H264_PIXEL_I400;
+    else if (descriptor->log2_chroma_w == 1 && descriptor->log2_chroma_h == 1) frame.pixel_layout = BITSCOPE_H264_PIXEL_I420;
+    else if (descriptor->log2_chroma_w == 1 && descriptor->log2_chroma_h == 0) frame.pixel_layout = BITSCOPE_H264_PIXEL_I422;
+    else if (descriptor->log2_chroma_w == 0 && descriptor->log2_chroma_h == 0) frame.pixel_layout = BITSCOPE_H264_PIXEL_I444;
+    else frame.pixel_layout = BITSCOPE_H264_PIXEL_UNSUPPORTED;
+  } else {
+    frame.pixel_layout = BITSCOPE_H264_PIXEL_UNSUPPORTED;
   }
 
   state->frame_count += 1;

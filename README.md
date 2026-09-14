@@ -85,6 +85,16 @@ Open [http://localhost:3000](http://localhost:3000), then drag a supported eleme
 
 The English interface is available at [`/`](http://localhost:3000/), and the Simplified Chinese interface is available at [`/zh-CN`](http://localhost:3000/zh-CN). Both routes share the same analyzer and can be switched from the header.
 
+### Native desktop development
+
+Install FFmpeg and dav1d development libraries, then launch the Electron host:
+
+```bash
+npm run desktop:dev
+```
+
+The command builds both native adapters, starts or reuses the local UI server, and opens the same interface with a restricted native decoder bridge. H.264 pictures are decoded by FFmpeg and AV1 pictures by dav1d; the GUI falls back to WebCodecs when the bridge or a native decoder is unavailable.
+
 > [!IMPORTANT]
 > These are developer commands. A self-contained desktop GUI package that does not require Node.js is planned, but is not published yet.
 
@@ -112,6 +122,7 @@ If WebCodecs or a matching browser decoder is unavailable, bitstream parsing sti
 | `public/av1-inspector-worker.js` | Runs the pinned libaom WebAssembly inspector off the UI thread with resource limits |
 | `native/h264-inspector/` | FFmpeg-backed H.264 native decoder adapter, inspection ABI, and JSONL diagnostic CLI |
 | `native/av1-decoder/` | dav1d-backed AV1 IVF/OBU decoder adapter, inspection ABI, and JSONL diagnostic CLI |
+| `desktop/` | Sandboxed Electron host, restricted IPC preload, and bounded native decoder runner |
 | `app/analyzer.css` | Responsive analyzer layout and visual system |
 | `public/` | Repository and application artwork |
 
@@ -123,6 +134,7 @@ npm run build    # create a production build
 npm run lint     # run static checks
 npm run native:h264:build  # build the optional native H.264 adapter
 npm run native:av1:build   # build the optional native AV1/dav1d adapter
+npm run desktop:dev        # build native adapters and open the desktop GUI
 ```
 
 The analyzer is written in TypeScript with React 19 and vinext. Parsing and decoding intentionally remain client-side so the same core can later be packaged as a desktop application.
@@ -131,18 +143,18 @@ The analyzer is written in TypeScript with React 19 and vinext. Parsing and deco
 
 The first native-decoder phase is available under `native/h264-inspector`. It wraps libavcodec behind a bounded, versioned C ABI and invokes an observer for every decoded frame. The callback currently exposes exact final YUV planes and FFmpeg-exported motion vectors. ABI slots and capability flags are reserved for prediction, signed residual, transform-coefficient, and pre-deblocking data; those flags stay off until the corresponding reconstruction-path hooks are implemented in a pinned FFmpeg fork.
 
-The native adapter is not wired into the browser bundle yet. Its C ABI is intended to remain the boundary for a later desktop integration and an Emscripten Worker build. See `native/h264-inspector/README.md` for prerequisites, direct CMake commands, and distribution-license requirements.
+The Electron desktop host connects this ABI to the decoded-picture canvas through a restricted IPC bridge. The ordinary browser route retains WebCodecs as its decoder. See `native/h264-inspector/README.md` for prerequisites, direct CMake commands, and distribution-license requirements.
 
 ### Native AV1 decoder backend
 
 `native/av1-decoder` wraps dav1d 1.5.1 or newer behind a second bounded, versioned C ABI. It accepts IVF and raw low-overhead OBU input, and exposes exact decoded YUV planes, 8/10/12-bit layout information, frame type, render size, timestamps, spatial/temporal IDs, color metadata, and explicit film-grain control. Film grain is disabled by default for reconstruction inspection.
 
-This decoder complements rather than replaces the libaom inspection Worker: dav1d supplies real decoded pictures, while libaom currently supplies the per-block partition, mode, transform, and motion-vector maps. Browser/desktop wiring is a subsequent integration step.
+This decoder complements rather than replaces the libaom inspection Worker: dav1d supplies real decoded pictures to the desktop GUI, while libaom supplies the per-block partition, mode, transform, and motion-vector maps.
 
 ## Known limitations
 
 - Raw Annex-B NAL streams, low-overhead AV1 OBU streams, and AV1 IVF are supported; general-purpose container demuxing is not included.
-- Decoded output depends on the browser, operating system, and available AVC/HEVC/AV1 codec implementation; VVC is analysis-only.
+- Browser decoded output depends on WebCodecs and the available operating-system codec implementation. The desktop host uses FFmpeg for H.264 and dav1d for AV1; HEVC still uses WebCodecs and VVC is analysis-only.
 - The browser H.264 subblock parser currently covers progressive 8-bit 4:2:0 CAVLC I/P slices, including luma intra prediction modes and list-0 motion vectors. DC and Plane are shown as non-directional; CABAC, B slices, FMO, interlaced/MBAFF pictures, and residual coefficient values are reported as unsupported rather than inferred.
 - The native H.264 adapter currently exports final decoder pixels and motion vectors. Exact prediction, residual, coefficient, and pre-deblocking output requires the planned patched-decoder hooks and is not synthesized from the final image.
 - The native AV1/dav1d adapter currently exports final pixels and frame metadata. dav1d's public API does not expose per-block residual, coefficient, prediction, or motion-vector maps, so libaom inspection remains responsible for those overlays.
@@ -158,6 +170,7 @@ This decoder complements rather than replaces the libaom inspection Worker: dav1
 - [x] Decode H.264 CAVLC I/P macroblock types and partition geometry
 - [x] Wrap the native FFmpeg H.264 decoder with a stable frame/MV inspection ABI
 - [x] Wrap the native dav1d AV1 decoder with a stable IVF/OBU frame inspection ABI
+- [x] Connect the native H.264/dav1d adapters to the desktop GUI with WebCodecs fallback
 - [ ] Add pinned FFmpeg H.264 reconstruction hooks for prediction, residuals, coefficients, and pre-deblocking pixels
 - [ ] Add H.264 CABAC/B-slice browser syntax parsing and reference details
 - [ ] Add MP4/MKV/MPEG-TS demuxing and AVCC conversion

@@ -2,6 +2,7 @@
   "name": "bitscope-bitstream-analyzer",
   "version": "0.1.0",
   "private": true,
+  "main": "desktop/main.cjs",
   "engines": {
     "node": ">=22.13.0"
   },
@@ -11,6 +12,8 @@
     "start": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext start",
     "test": "npm run build && node --test tests/*.test.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
+    "desktop:prepare": "npm run native:h264:build && npm run native:av1:build",
+    "desktop:dev": "npm run desktop:prepare && node desktop/dev.cjs",
     "native:h264:configure": "cmake -S native/h264-inspector -B build/h264-inspector -DCMAKE_BUILD_TYPE=Release",
     "native:h264:build": "npm run native:h264:configure && cmake --build build/h264-inspector --parallel",
     "native:av1:configure": "cmake -S native/av1-decoder -B build/av1-decoder -DCMAKE_BUILD_TYPE=Release",
@@ -34,6 +37,7 @@
     "@vitejs/plugin-react": "6.0.2",
     "@vitejs/plugin-rsc": "^0.5.34",
     "drizzle-kit": "^0.18.1",
+    "electron": "44.3.0",
     "eslint": "9.39.4",
     "eslint-plugin-jsx-a11y": "6.10.2",
     "eslint-plugin-react": "7.37.5",
