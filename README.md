@@ -87,7 +87,9 @@ The English interface is available at [`/`](http://localhost:3000/), and the Sim
 
 ### Install the desktop GUI
 
-The macOS Apple Silicon release is a self-contained `.dmg`: open it and drag **BitScope** to Applications. End users do not need Node.js, npm, FFmpeg, or dav1d. The current local build is unsigned, so development builds may require **Open** from Finder's context menu; public releases should be signed and notarized with an Apple Developer ID.
+The macOS Apple Silicon release is a self-contained `.dmg`: open it and drag **BitScope** to Applications. The Windows x64 release is an assisted NSIS `.exe`: open it, choose the installation directory, and complete the setup wizard. Both packages include the H.264 and AV1 native decoders, so end users do not need Node.js, npm, FFmpeg, or dav1d.
+
+Current local builds are unsigned. macOS may require **Open** from Finder's context menu, while Windows Defender SmartScreen may show an unknown-publisher warning. Public releases should be signed with platform developer certificates, and macOS releases should also be notarized.
 
 ### Native desktop development
 
@@ -99,13 +101,14 @@ npm run desktop:dev
 
 The command builds both native adapters, starts or reuses the local UI server, and opens the same interface with a restricted native decoder bridge. H.264 pictures are decoded by FFmpeg and AV1 pictures by dav1d; the GUI falls back to WebCodecs when the bridge or a native decoder is unavailable.
 
-To produce the self-contained macOS arm64 DMG and ZIP as a maintainer:
+To produce the self-contained macOS arm64 DMG/ZIP or Windows x64 NSIS installer as a maintainer:
 
 ```bash
 npm run desktop:dist:mac
+npm run desktop:dist:win
 ```
 
-This packaging build downloads checksum-pinned FFmpeg 7.1.5 source, compiles an LGPL-only static H.264 decoder, bundles dav1d beside the AV1 adapter, and writes artifacts to `release/`.
+These packaging builds use checksum-pinned FFmpeg 7.1.5 and dav1d 1.5.4 sources, compile the native decoder helpers for the target platform, and write artifacts to `release/`. The Windows cross-build requires MinGW-w64, Meson, Ninja, NASM, CMake, and pkg-config.
 
 ## Using the analyzer
 
@@ -145,6 +148,7 @@ npm run native:h264:build  # build the optional native H.264 adapter
 npm run native:av1:build   # build the optional native AV1/dav1d adapter
 npm run desktop:dev        # build native adapters and open the desktop GUI
 npm run desktop:dist:mac   # build a self-contained macOS arm64 DMG and ZIP
+npm run desktop:dist:win   # build a self-contained Windows x64 NSIS installer
 ```
 
 The analyzer is written in TypeScript with React 19 and vinext. Parsing and decoding intentionally remain client-side so the same core can later be packaged as a desktop application.
@@ -177,7 +181,8 @@ This decoder complements rather than replaces the libaom inspection Worker: dav1
 ## Roadmap
 
 - [x] Ship a self-contained macOS Apple Silicon desktop GUI package
-- [ ] Add signed/notarized macOS Intel, Windows, and Linux release packages
+- [x] Ship a self-contained Windows x64 NSIS desktop installer
+- [ ] Sign/notarize desktop releases and add macOS Intel and Linux packages
 - [x] Decode H.264 CAVLC I/P macroblock types and partition geometry
 - [x] Wrap the native FFmpeg H.264 decoder with a stable frame/MV inspection ABI
 - [x] Wrap the native dav1d AV1 decoder with a stable IVF/OBU frame inspection ABI

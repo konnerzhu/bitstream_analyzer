@@ -36,10 +36,11 @@ function validateRequest(request) {
 function executableFor(codec, options) {
   const environmentPath = codec === "h264" ? process.env.BITSCOPE_H264_DECODER : process.env.BITSCOPE_AV1_DECODER;
   if (environmentPath) return environmentPath;
+  const extension = (options.platform || process.platform) === "win32" ? ".exe" : "";
   if (options.isPackaged) {
-    return join(options.resourcesPath, "native", codec === "h264" ? "bitscope-h264-inspect" : "bitscope-av1-decode");
+    return join(options.resourcesPath, "native", `${codec === "h264" ? "bitscope-h264-inspect" : "bitscope-av1-decode"}${extension}`);
   }
-  return join(options.projectRoot, "build", codec === "h264" ? "h264-inspector" : "av1-decoder", codec === "h264" ? "bitscope-h264-inspect" : "bitscope-av1-decode");
+  return join(options.projectRoot, "build", codec === "h264" ? "h264-inspector" : "av1-decoder", `${codec === "h264" ? "bitscope-h264-inspect" : "bitscope-av1-decode"}${extension}`);
 }
 
 function parseSelectedFrame(stdout) {
@@ -107,6 +108,7 @@ module.exports = {
   MAX_INPUT_BYTES,
   MAX_OUTPUT_BYTES,
   decodeNativeFrame,
+  executableFor,
   parseSelectedFrame,
   validateRequest,
 };

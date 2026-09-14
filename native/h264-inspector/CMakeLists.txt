@@ -39,7 +39,9 @@ if(MSVC)
   target_compile_options(bitscope-h264-inspect PRIVATE /W4 /WX /sdl)
 else()
   foreach(target bitscope_h264_inspector bitscope-h264-inspect)
-    target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic -Werror -fstack-protector-strong)
+    target_compile_options(${target} PRIVATE
+      -Wall -Wextra -Wpedantic -Werror -Wformat -Wformat-security
+      -fstack-protector-strong -D_FORTIFY_SOURCE=2)
   endforeach()
   if(BITSCOPE_ENABLE_SANITIZERS)
     foreach(target bitscope_h264_inspector bitscope-h264-inspect)

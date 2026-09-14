@@ -18,9 +18,12 @@
     "desktop:dev": "npm run desktop:prepare && node desktop/dev.cjs",
     "desktop:renderer:build": "vite build --config vite.desktop.config.ts",
     "desktop:native:mac": "sh scripts/build-desktop-native-macos.sh",
+    "desktop:native:win": "sh scripts/build-desktop-native-windows.sh",
     "desktop:icon:mac": "sh scripts/build-macos-icon.sh",
+    "desktop:icon:win": "sh scripts/build-windows-icon.sh",
     "desktop:stage": "node scripts/stage-desktop-app.mjs",
     "desktop:dist:mac": "npm run desktop:renderer:build && npm run desktop:native:mac && npm run desktop:icon:mac && npm run desktop:stage && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dmg zip --arm64",
+    "desktop:dist:win": "npm run desktop:renderer:build && npm run desktop:native:win && npm run desktop:icon:win && npm run desktop:stage && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win nsis --x64",
     "native:h264:configure": "cmake -S native/h264-inspector -B build/h264-inspector -DCMAKE_BUILD_TYPE=Release",
     "native:h264:build": "npm run native:h264:configure && cmake --build build/h264-inspector --parallel",
     "native:av1:configure": "cmake -S native/av1-decoder -B build/av1-decoder -DCMAKE_BUILD_TYPE=Release",
@@ -73,16 +76,6 @@
       "**/*",
       "!node_modules{,/**/*}"
     ],
-    "extraResources": [
-      {
-        "from": "dist-desktop/native",
-        "to": "native"
-      },
-      {
-        "from": "dist-desktop/native-licenses",
-        "to": "native-licenses"
-      }
-    ],
     "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
     "mac": {
       "category": "public.app-category.developer-tools",
@@ -92,10 +85,43 @@
       "target": [
         "dmg",
         "zip"
+      ],
+      "extraResources": [
+        {
+          "from": "dist-desktop/native",
+          "to": "native"
+        },
+        {
+          "from": "dist-desktop/native-licenses",
+          "to": "native-licenses"
+        }
+      ]
+    },
+    "win": {
+      "icon": "build/icon.svg",
+      "target": [
+        "nsis"
+      ],
+      "extraResources": [
+        {
+          "from": "dist-desktop/native-win",
+          "to": "native"
+        },
+        {
+          "from": "dist-desktop/native-licenses",
+          "to": "native-licenses"
+        }
       ]
     },
     "dmg": {
       "title": "BitScope ${version}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "deleteAppDataOnUninstall": false
     }
   }
 }

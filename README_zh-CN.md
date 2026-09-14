@@ -85,7 +85,9 @@ npm run dev
 
 ### 安装桌面 GUI
 
-macOS Apple Silicon 版本为完整的 `.dmg` 安装包：打开后将 **BitScope** 拖到“应用程序”即可。终端用户无需安装 Node.js、npm、FFmpeg 或 dav1d。当前本地构建尚未签名，开发包可能需要在 Finder 中右键选择“打开”；公开发布时应使用 Apple Developer ID 完成签名与公证。
+macOS Apple Silicon 版本为完整的 `.dmg` 安装包：打开后将 **BitScope** 拖到“应用程序”即可。Windows x64 版本为 NSIS `.exe` 安装程序：运行后可选择安装目录并完成安装向导。两个安装包均包含 H.264 与 AV1 原生解码器，终端用户无需安装 Node.js、npm、FFmpeg 或 dav1d。
+
+当前本地构建尚未签名。macOS 可能需要在 Finder 中右键选择“打开”，Windows Defender SmartScreen 可能提示发布者未知。公开发布时应使用相应平台的开发者证书签名，macOS 版本还应完成公证。
 
 ### 原生桌面开发模式
 
@@ -97,13 +99,14 @@ npm run desktop:dev
 
 该命令会构建两个原生适配器、启动或复用本地 UI 服务，并通过受限的原生解码桥打开同一套界面。H.264 画面由 FFmpeg 解码，AV1 画面由 dav1d 解码；原生桥或解码器不可用时自动回退到 WebCodecs。
 
-维护者可使用以下命令生成独立的 macOS arm64 DMG 与 ZIP：
+维护者可使用以下命令生成独立的 macOS arm64 DMG/ZIP 或 Windows x64 NSIS 安装程序：
 
 ```bash
 npm run desktop:dist:mac
+npm run desktop:dist:win
 ```
 
-该打包流程会下载带固定 SHA-256 校验的 FFmpeg 7.1.5 源码，构建仅启用 LGPL 组件的静态 H.264 解码器，将 dav1d 与 AV1 适配器一并打包，并把产物写入 `release/`。
+打包流程使用固定 SHA-256 校验的 FFmpeg 7.1.5 与 dav1d 1.5.4 源码，为目标平台构建原生解码程序，并把产物写入 `release/`。Windows 交叉构建需要 MinGW-w64、Meson、Ninja、NASM、CMake 与 pkg-config。
 
 ## 使用方法
 
@@ -139,6 +142,7 @@ npm run native:h264:build  # 构建可选的原生 H.264 适配器
 npm run native:av1:build   # 构建可选的原生 AV1/dav1d 适配器
 npm run desktop:dev        # 构建原生适配器并打开桌面 GUI
 npm run desktop:dist:mac   # 生成独立的 macOS arm64 DMG 与 ZIP
+npm run desktop:dist:win   # 生成独立的 Windows x64 NSIS 安装程序
 ```
 
 项目使用 TypeScript、React 19 和 vinext 开发。解析和解码逻辑有意保留在客户端，以便未来复用到桌面应用中。
@@ -171,7 +175,8 @@ Electron 桌面宿主现已通过受限 IPC 桥把该 ABI 接入解码画布。�
 ## 路线图
 
 - [x] 发布独立的 macOS Apple Silicon 桌面 GUI 安装包
-- [ ] 增加已签名/公证的 macOS Intel、Windows 和 Linux 安装包
+- [x] 发布独立的 Windows x64 NSIS 桌面安装程序
+- [ ] 为桌面发行包签名/公证，并增加 macOS Intel 与 Linux 安装包
 - [x] 解析 H.264 CAVLC I/P 宏块类型和真实分区
 - [x] 使用稳定的帧/运动矢量检查 ABI 包装原生 FFmpeg H.264 解码器
 - [x] 使用稳定的 IVF/OBU 帧检查 ABI 包装原生 dav1d AV1 解码器
