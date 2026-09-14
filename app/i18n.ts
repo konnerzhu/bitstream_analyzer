@@ -295,7 +295,14 @@ export function localizeTypeName(name: string, locale: Locale) {
 }
 
 export function localizeBlockName(name: string, locale: Locale) {
-  return locale === "en" && name === "编码树单元" ? "CTU" : name;
+  if (locale === "en") {
+    if (name === "宏块") return "Macroblock";
+    if (name === "编码树单元") return "CTU";
+    return name;
+  }
+  if (name === "CTU") return "编码树单元";
+  if (name === "Superblock") return "超级块";
+  return name;
 }
 
 export function localizeParameterSetName(name: string, locale: Locale) {
