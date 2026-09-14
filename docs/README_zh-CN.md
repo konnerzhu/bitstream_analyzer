@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="public/og.png" alt="BitScope 多编码码流分析工具" width="900">
+  <img src="../public/og.png" alt="BitScope 多编码码流分析工具" width="900">
 </p>
 
 <h1 align="center">BitScope</h1>
@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="README.md">English</a> · 简体中文
+  <a href="../README.md">English</a> · 简体中文
 </p>
 
 <p align="center">
@@ -106,7 +106,7 @@ npm run desktop:dist:mac
 npm run desktop:dist:win
 ```
 
-打包流程使用固定 SHA-256 校验的 FFmpeg 7.1.5 与 dav1d 1.5.4 源码，为目标平台构建原生解码程序，并把产物写入 `release/`。Windows 交叉构建需要 MinGW-w64、Meson、Ninja、NASM、CMake 与 pkg-config。
+打包流程使用固定 SHA-256 校验的 FFmpeg 7.1.5 与 dav1d 1.5.4 源码，为目标平台构建原生解码程序，并把产物写入 `.artifacts/release/`。Windows 交叉构建需要 MinGW-w64、Meson、Ninja、NASM、CMake 与 pkg-config。
 
 ## 使用方法
 
@@ -129,6 +129,9 @@ npm run desktop:dist:win
 | `native/h264-inspector/` | 基于 FFmpeg 的 H.264 原生解码适配器、检查 ABI 与 JSONL 诊断 CLI |
 | `native/av1-decoder/` | 基于 dav1d 的 AV1 IVF/OBU 解码适配器、检查 ABI 与 JSONL 诊断 CLI |
 | `desktop/` | 沙箱化 Electron 宿主、受限 IPC preload 与有资源上限的原生解码执行器 |
+| `config/` | 桌面端 Vite 与 Drizzle 工具配置 |
+| `docs/` | 本地化及辅助文档 |
+| `.artifacts/` | 已忽略的网页、原生程序、桌面应用、安装包与打包产物 |
 | `app/analyzer.css` | 响应式分析界面与视觉样式 |
 | `public/` | 项目与应用图片资源 |
 

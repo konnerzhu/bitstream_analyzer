@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  English · <a href="README_zh-CN.md">简体中文</a>
+  English · <a href="docs/README_zh-CN.md">简体中文</a>
 </p>
 
 <p align="center">
@@ -108,7 +108,7 @@ npm run desktop:dist:mac
 npm run desktop:dist:win
 ```
 
-These packaging builds use checksum-pinned FFmpeg 7.1.5 and dav1d 1.5.4 sources, compile the native decoder helpers for the target platform, and write artifacts to `release/`. The Windows cross-build requires MinGW-w64, Meson, Ninja, NASM, CMake, and pkg-config.
+These packaging builds use checksum-pinned FFmpeg 7.1.5 and dav1d 1.5.4 sources, compile the native decoder helpers for the target platform, and write artifacts to `.artifacts/release/`. The Windows cross-build requires MinGW-w64, Meson, Ninja, NASM, CMake, and pkg-config.
 
 ## Using the analyzer
 
@@ -135,6 +135,9 @@ If WebCodecs or a matching browser decoder is unavailable, bitstream parsing sti
 | `native/h264-inspector/` | FFmpeg-backed H.264 native decoder adapter, inspection ABI, and JSONL diagnostic CLI |
 | `native/av1-decoder/` | dav1d-backed AV1 IVF/OBU decoder adapter, inspection ABI, and JSONL diagnostic CLI |
 | `desktop/` | Sandboxed Electron host, restricted IPC preload, and bounded native decoder runner |
+| `config/` | Desktop Vite and Drizzle tool configuration |
+| `docs/` | Localized and supporting documentation |
+| `.artifacts/` | Ignored web, native, desktop, installer, and packaging outputs |
 | `app/analyzer.css` | Responsive analyzer layout and visual system |
 | `public/` | Repository and application artwork |
 

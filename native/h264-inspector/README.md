@@ -9,9 +9,9 @@ The ABI already provides callback-scoped slots for future predicted pixels, sign
 Install an LGPL-compatible FFmpeg development build and CMake, then run:
 
 ```bash
-cmake -S native/h264-inspector -B build/h264-inspector -DCMAKE_BUILD_TYPE=Release
-cmake --build build/h264-inspector
-build/h264-inspector/bitscope-h264-inspect sample.h264
+cmake -S native/h264-inspector -B .artifacts/build/h264-inspector -DCMAKE_BUILD_TYPE=Release
+cmake --build .artifacts/build/h264-inspector
+.artifacts/build/h264-inspector/bitscope-h264-inspect sample.h264
 ```
 
 The CLI writes newline-delimited JSON frame summaries. Applications should link the static adapter and consume the callback API in `include/bitscope_h264_inspector.h`; pixel pointers are callback-scoped and must not be retained.
@@ -19,7 +19,7 @@ The CLI writes newline-delimited JSON frame summaries. Applications should link 
 The desktop bridge uses the CLI's bounded selected-frame export mode:
 
 ```bash
-build/h264-inspector/bitscope-h264-inspect --frame 0 --output frame.planes sample.h264
+.artifacts/build/h264-inspector/bitscope-h264-inspect --frame 0 --output frame.planes sample.h264
 ```
 
 The output contains tightly packed planar samples; the `selectedFrame` JSON record describes plane offsets, dimensions, bit depth, range, matrix and byte order. ABI v2 adds that color/layout metadata without exposing decoder-owned pointers outside the callback.

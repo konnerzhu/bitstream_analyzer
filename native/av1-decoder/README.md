@@ -9,9 +9,9 @@ Film grain is disabled by default so inspection receives the decoded reconstruct
 Install dav1d 1.5.1 or newer, pkg-config, and CMake, then run:
 
 ```bash
-cmake -S native/av1-decoder -B build/av1-decoder -DCMAKE_BUILD_TYPE=Release
-cmake --build build/av1-decoder
-build/av1-decoder/bitscope-av1-decode sample.ivf
+cmake -S native/av1-decoder -B .artifacts/build/av1-decoder -DCMAKE_BUILD_TYPE=Release
+cmake --build .artifacts/build/av1-decoder
+.artifacts/build/av1-decoder/bitscope-av1-decode sample.ivf
 ```
 
 The CLI writes newline-delimited JSON frame summaries. Applications should link the static adapter and consume `include/bitscope_av1_decoder.h`. Plane pointers are callback-scoped and must not be retained.
@@ -19,7 +19,7 @@ The CLI writes newline-delimited JSON frame summaries. Applications should link 
 The desktop bridge uses the CLI's bounded selected-frame export mode:
 
 ```bash
-build/av1-decoder/bitscope-av1-decode --frame 0 --output frame.planes sample.ivf
+.artifacts/build/av1-decoder/bitscope-av1-decode --frame 0 --output frame.planes sample.ivf
 ```
 
 The output contains tightly packed planar samples; the `selectedFrame` JSON record describes plane offsets, dimensions, bit depth, range, matrix and byte order.

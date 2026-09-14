@@ -2,7 +2,7 @@
 set -eu
 
 project_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-work_root="$project_root/work/desktop-native-windows"
+work_root="$project_root/.artifacts/work/desktop-native-windows"
 ffmpeg_version="7.1.5"
 ffmpeg_checksum="de668509caf9e35e3cd162473441fdb29538c6d96ed080292b3cf9e6fc5d558f"
 ffmpeg_archive="$work_root/ffmpeg-$ffmpeg_version.tar.xz"
@@ -16,8 +16,8 @@ dav1d_build="$work_root/dav1d-build"
 dav1d_prefix="$work_root/dav1d-install"
 h264_build="$work_root/h264-build"
 av1_build="$work_root/av1-build"
-native_output="$project_root/dist-desktop/native-win"
-license_output="$project_root/dist-desktop/native-licenses"
+native_output="$project_root/.artifacts/desktop/native-win"
+license_output="$project_root/.artifacts/desktop/native-licenses"
 meson_cross="$project_root/scripts/toolchains/windows-x64-mingw.ini"
 cmake_toolchain="$project_root/scripts/toolchains/windows-x64-mingw.cmake"
 

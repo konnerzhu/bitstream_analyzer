@@ -40,7 +40,7 @@ function executableFor(codec, options) {
   if (options.isPackaged) {
     return join(options.resourcesPath, "native", `${codec === "h264" ? "bitscope-h264-inspect" : "bitscope-av1-decode"}${extension}`);
   }
-  return join(options.projectRoot, "build", codec === "h264" ? "h264-inspector" : "av1-decoder", `${codec === "h264" ? "bitscope-h264-inspect" : "bitscope-av1-decode"}${extension}`);
+  return join(options.projectRoot, ".artifacts", "build", codec === "h264" ? "h264-inspector" : "av1-decoder", `${codec === "h264" ? "bitscope-h264-inspect" : "bitscope-av1-decode"}${extension}`);
 }
 
 function parseSelectedFrame(stdout) {

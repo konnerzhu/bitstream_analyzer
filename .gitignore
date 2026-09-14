@@ -34,10 +34,8 @@ yarn-error.log*
 # vercel
 .vercel
 
+# vinext writes here temporarily before the build is archived.
 /dist/
-/dist-desktop/
-/release/
-/build/
+/.artifacts/
 /.wrangler/
 /outputs/
-/work/

@@ -8,7 +8,7 @@ export default defineConfig({
   publicDir: resolve("public"),
   plugins: [react()],
   build: {
-    outDir: resolve("dist-desktop/renderer"),
+    outDir: resolve(".artifacts/desktop/renderer"),
     emptyOutDir: true,
     sourcemap: false,
     target: "chrome142",

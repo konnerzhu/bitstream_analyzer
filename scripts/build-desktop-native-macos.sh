@@ -7,14 +7,14 @@ if [ "$(uname -s)" != "Darwin" ]; then
 fi
 
 project_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-work_root="$project_root/work/desktop-native"
+work_root="$project_root/.artifacts/work/desktop-native"
 ffmpeg_version="7.1.5"
 ffmpeg_archive="$work_root/ffmpeg-$ffmpeg_version.tar.xz"
 ffmpeg_source="$work_root/ffmpeg-$ffmpeg_version"
 ffmpeg_prefix="$work_root/ffmpeg-install"
 ffmpeg_checksum="de668509caf9e35e3cd162473441fdb29538c6d96ed080292b3cf9e6fc5d558f"
-native_output="$project_root/dist-desktop/native"
-license_output="$project_root/dist-desktop/native-licenses"
+native_output="$project_root/.artifacts/desktop/native"
+license_output="$project_root/.artifacts/desktop/native-licenses"
 
 mkdir -p "$work_root" "$native_output" "$license_output"
 

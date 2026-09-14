@@ -10,13 +10,13 @@
   },
   "scripts": {
     "dev": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext dev",
-    "build": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext build",
-    "start": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext start",
+    "build": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext build && node scripts/archive-web-build.mjs",
+    "start": "WRANGLER_LOG_PATH=.wrangler/wrangler.log node scripts/start-production.mjs",
     "test": "npm run build && node --test tests/*.test.mjs",
-    "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
+    "lint": "eslint .",
     "desktop:prepare": "npm run native:h264:build && npm run native:av1:build",
     "desktop:dev": "npm run desktop:prepare && node desktop/dev.cjs",
-    "desktop:renderer:build": "vite build --config vite.desktop.config.ts",
+    "desktop:renderer:build": "vite build --config config/vite.desktop.config.ts",
     "desktop:native:mac": "sh scripts/build-desktop-native-macos.sh",
     "desktop:native:win": "sh scripts/build-desktop-native-windows.sh",
     "desktop:icon:mac": "sh scripts/build-macos-icon.sh",
@@ -24,11 +24,11 @@
     "desktop:stage": "node scripts/stage-desktop-app.mjs",
     "desktop:dist:mac": "npm run desktop:renderer:build && npm run desktop:native:mac && npm run desktop:icon:mac && npm run desktop:stage && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dmg zip --arm64",
     "desktop:dist:win": "npm run desktop:renderer:build && npm run desktop:native:win && npm run desktop:icon:win && npm run desktop:stage && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win nsis --x64",
-    "native:h264:configure": "cmake -S native/h264-inspector -B build/h264-inspector -DCMAKE_BUILD_TYPE=Release",
-    "native:h264:build": "npm run native:h264:configure && cmake --build build/h264-inspector --parallel",
-    "native:av1:configure": "cmake -S native/av1-decoder -B build/av1-decoder -DCMAKE_BUILD_TYPE=Release",
-    "native:av1:build": "npm run native:av1:configure && cmake --build build/av1-decoder --parallel",
-    "db:generate": "drizzle-kit generate"
+    "native:h264:configure": "cmake -S native/h264-inspector -B .artifacts/build/h264-inspector -DCMAKE_BUILD_TYPE=Release",
+    "native:h264:build": "npm run native:h264:configure && cmake --build .artifacts/build/h264-inspector --parallel",
+    "native:av1:configure": "cmake -S native/av1-decoder -B .artifacts/build/av1-decoder -DCMAKE_BUILD_TYPE=Release",
+    "native:av1:build": "npm run native:av1:configure && cmake --build .artifacts/build/av1-decoder --parallel",
+    "db:generate": "drizzle-kit generate:sqlite --config config/drizzle.config.ts"
   },
   "dependencies": {
     "drizzle-orm": "0.45.2",
@@ -69,8 +69,8 @@
     "asar": true,
     "npmRebuild": false,
     "directories": {
-      "app": "dist-desktop/app",
-      "output": "release"
+      "app": ".artifacts/desktop/app",
+      "output": ".artifacts/release"
     },
     "files": [
       "**/*",
@@ -79,7 +79,7 @@
     "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
     "mac": {
       "category": "public.app-category.developer-tools",
-      "icon": "build/icon.svg",
+      "icon": ".artifacts/build/icon.svg",
       "hardenedRuntime": true,
       "gatekeeperAssess": false,
       "target": [
@@ -88,27 +88,27 @@
       ],
       "extraResources": [
         {
-          "from": "dist-desktop/native",
+          "from": ".artifacts/desktop/native",
           "to": "native"
         },
         {
-          "from": "dist-desktop/native-licenses",
+          "from": ".artifacts/desktop/native-licenses",
           "to": "native-licenses"
         }
       ]
     },
     "win": {
-      "icon": "build/icon.svg",
+      "icon": ".artifacts/build/icon.svg",
       "target": [
         "nsis"
       ],
       "extraResources": [
         {
-          "from": "dist-desktop/native-win",
+          "from": ".artifacts/desktop/native-win",
           "to": "native"
         },
         {
-          "from": "dist-desktop/native-licenses",
+          "from": ".artifacts/desktop/native-licenses",
           "to": "native-licenses"
         }
       ]
