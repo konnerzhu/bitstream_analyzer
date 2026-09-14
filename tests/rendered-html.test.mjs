@@ -61,4 +61,6 @@ test("declares each supported elementary-stream format", async () => {
   assert.match(analyzer, /parsedMacroblock\.partitions/);
   assert.match(analyzer, /unitColor\(unit\.type, analysis\.codecKind\)/);
   assert.doesNotMatch(analyzer, /className="nal-card"/);
+  assert.doesNotMatch(analyzer, /copy\.(?:dimensions|frameRate)/);
+  assert.doesNotMatch(analyzer, /analysis\.duration/);
 });

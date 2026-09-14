@@ -762,9 +762,7 @@ export default function Analyzer({ locale }: { locale: Locale }) {
       <section className="summary-head"><div><p className="eyebrow">{analysis.codecName}{analysis.containerName ? ` · ${analysis.containerName}` : ""} / {copy.parsed}</p><h2>{analysis.sps ? `${analysis.sps.width} × ${analysis.sps.height}` : analysis.codecName}</h2></div><UploadPanel onFile={openFile} locale={locale} compact /></section>
       <section className="stats-grid">
         <Stat label={copy.profile} value={analysis.sps?.profile ?? copy.unknown} note={analysis.sps ? `Level ${analysis.sps.level}` : `${copy.missing} ${localizeParameterSetName(analysis.parameterSetName, locale)}`} />
-        <Stat label={copy.dimensions} value={analysis.sps ? `${analysis.sps.width} × ${analysis.sps.height}` : "—"} note={analysis.sps?.frameMbsOnly ? copy.progressive : analysis.sps ? copy.interlaced : undefined} />
-        <Stat label={copy.frameRate} value={analysis.sps?.fps ? `${analysis.sps.fps.toFixed(3)} fps` : "—"} note={analysis.sps?.fps ? (analysis.containerName === "IVF" ? copy.fromIvf : analysis.codecKind === "av1" ? copy.fromSequence : copy.fromVui) : copy.frameRateUndeclared} />
-        <Stat label={copy.framesKeyframes} value={`${analysis.frameCount} / ${analysis.idrCount}`} note={analysis.duration ? `${copy.about} ${analysis.duration.toFixed(2)} ${copy.seconds}${analysis.declaredFrameCount !== undefined ? ` · ${copy.ivfDeclares} ${analysis.declaredFrameCount} ${copy.frames}` : ""}` : `${analysis.units.length} ${analysis.unitName} ${copy.units}`} />
+        <Stat label={copy.framesKeyframes} value={`${analysis.frameCount} / ${analysis.idrCount}`} note={analysis.declaredFrameCount !== undefined ? `${copy.ivfDeclares} ${analysis.declaredFrameCount} ${copy.frames}` : `${analysis.units.length} ${analysis.unitName} ${copy.units}`} />
       </section>
       {sourceBytes && <DecodedPreview key={sourceRevision} bytes={sourceBytes} analysis={analysis} selected={selected} onSelect={setSelected} onIntraModeDistributionChange={setIntraModeDistribution} onInterModeDistributionChange={setInterModeDistribution} locale={locale} />}
       <section className="timeline-card">
