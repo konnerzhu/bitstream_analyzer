@@ -50,6 +50,28 @@ download_and_verify \
   "https://code.videolan.org/videolan/dav1d/-/archive/$dav1d_version/dav1d-$dav1d_version.tar.bz2" \
   "$dav1d_archive" "$dav1d_checksum"
 
+ffmpeg_pc="$ffmpeg_prefix/lib/pkgconfig/libavcodec.pc"
+if [ -f "$ffmpeg_source/config.h" ] || [ -d "$ffmpeg_prefix" ]; then
+  if [ ! -f "$ffmpeg_prefix/include/libavcodec/avcodec.h" ] || \
+     [ ! -f "$ffmpeg_prefix/lib/libavcodec.a" ] || \
+     [ ! -f "$ffmpeg_pc" ] || \
+     ! grep -Fqx "prefix=$ffmpeg_prefix" "$ffmpeg_pc"; then
+    echo "Discarding incomplete or relocated FFmpeg build cache."
+    rm -rf "$ffmpeg_source" "$ffmpeg_prefix" "$h264_build"
+  fi
+fi
+
+dav1d_pc="$dav1d_prefix/lib/pkgconfig/dav1d.pc"
+if [ -f "$dav1d_build/build.ninja" ] || [ -d "$dav1d_prefix" ]; then
+  if [ ! -f "$dav1d_prefix/include/dav1d/dav1d.h" ] || \
+     [ ! -f "$dav1d_prefix/lib/libdav1d.a" ] || \
+     [ ! -f "$dav1d_pc" ] || \
+     ! grep -Fqx "prefix=$dav1d_prefix" "$dav1d_pc"; then
+    echo "Discarding incomplete or relocated dav1d build cache."
+    rm -rf "$dav1d_build" "$dav1d_prefix" "$av1_build"
+  fi
+fi
+
 if [ ! -d "$ffmpeg_source" ]; then
   tar -xf "$ffmpeg_archive" -C "$work_root"
 fi

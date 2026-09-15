@@ -15,6 +15,7 @@ ffmpeg_prefix="$work_root/ffmpeg-install"
 ffmpeg_checksum="de668509caf9e35e3cd162473441fdb29538c6d96ed080292b3cf9e6fc5d558f"
 native_output="$project_root/.artifacts/desktop/native"
 license_output="$project_root/.artifacts/desktop/native-licenses"
+h264_build="$work_root/h264-build"
 
 mkdir -p "$work_root" "$native_output" "$license_output"
 
@@ -28,6 +29,17 @@ actual_checksum=$(shasum -a 256 "$ffmpeg_archive" | awk '{print $1}')
 if [ "$actual_checksum" != "$ffmpeg_checksum" ]; then
   echo "FFmpeg source checksum verification failed." >&2
   exit 1
+fi
+
+ffmpeg_pc="$ffmpeg_prefix/lib/pkgconfig/libavcodec.pc"
+if [ -f "$ffmpeg_source/config.h" ] || [ -d "$ffmpeg_prefix" ]; then
+  if [ ! -f "$ffmpeg_prefix/include/libavcodec/avcodec.h" ] || \
+     [ ! -f "$ffmpeg_prefix/lib/libavcodec.a" ] || \
+     [ ! -f "$ffmpeg_pc" ] || \
+     ! grep -Fqx "prefix=$ffmpeg_prefix" "$ffmpeg_pc"; then
+    echo "Discarding incomplete or relocated FFmpeg build cache."
+    rm -rf "$ffmpeg_source" "$ffmpeg_prefix" "$h264_build"
+  fi
 fi
 
 if [ ! -f "$ffmpeg_source/config.h" ]; then
@@ -61,10 +73,10 @@ fi
 
 PKG_CONFIG_PATH="$ffmpeg_prefix/lib/pkgconfig" cmake \
   -S "$project_root/native/h264-inspector" \
-  -B "$work_root/h264-build" \
+  -B "$h264_build" \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_FIND_USE_SYSTEM_PACKAGE_REGISTRY=OFF
-cmake --build "$work_root/h264-build" --parallel
+cmake --build "$h264_build" --parallel
 
 cmake \
   -S "$project_root/native/av1-decoder" \
@@ -72,7 +84,7 @@ cmake \
   -DCMAKE_BUILD_TYPE=Release
 cmake --build "$work_root/av1-build" --parallel
 
-cp "$work_root/h264-build/bitscope-h264-inspect" "$native_output/bitscope-h264-inspect"
+cp "$h264_build/bitscope-h264-inspect" "$native_output/bitscope-h264-inspect"
 cp "$work_root/av1-build/bitscope-av1-decode" "$native_output/bitscope-av1-decode"
 
 dav1d_path=$(otool -L "$native_output/bitscope-av1-decode" | awk '/libdav1d/{print $1; exit}')
