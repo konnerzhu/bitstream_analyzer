@@ -34,6 +34,7 @@ test("parses every macroblock in a CAVLC IDR picture", async () => {
     assert.ok(result.macroblocks.every(macroblock => macroblock?.typeName.startsWith("I_")));
     assert.ok(result.macroblocks.every(macroblock => macroblock.partitions.length >= 1));
     assert.ok(result.macroblocks.every(macroblock => macroblock.intraModes?.length >= 1));
+    assert.ok(result.macroblocks.every(macroblock => Number.isSafeInteger(macroblock.qp) && macroblock.qp >= 0 && macroblock.qp <= 51));
     assert.ok(result.macroblocks.flatMap(macroblock => macroblock.intraModes).every(mode => mode.mode >= 0 && mode.mode <= 8));
   } finally {
     await parser.dispose();
@@ -55,6 +56,20 @@ test("reconstructs final H.264 list-0 motion vectors for a CAVLC P picture", asy
     assert.ok(vectors.every(vector => vector.reference === 0));
     assert.ok(vectors.every(vector => Number.isSafeInteger(vector.mvX) && Number.isSafeInteger(vector.mvY)));
     assert.ok(vectors.every(vector => vector.width >= 4 && vector.height >= 4));
+    assert.ok(result.macroblocks.every(macroblock => Number.isSafeInteger(macroblock.qp) && macroblock.qp >= 0 && macroblock.qp <= 51));
+  } finally {
+    await parser.dispose();
+  }
+});
+
+test("wraps H.264 macroblock QP updates across the 0–51 range", async () => {
+  const parser = await loadParser();
+  try {
+    assert.equal(parser.subblocks.updateH264Qp(51, 1), 0);
+    assert.equal(parser.subblocks.updateH264Qp(0, -1), 51);
+    assert.equal(parser.subblocks.updateH264Qp(26, 4), 30);
+    assert.throws(() => parser.subblocks.updateH264Qp(52, 0), /QP 或 ΔQP 超出范围/);
+    assert.throws(() => parser.subblocks.updateH264Qp(20, 26), /QP 或 ΔQP 超出范围/);
   } finally {
     await parser.dispose();
   }

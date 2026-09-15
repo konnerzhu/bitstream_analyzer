@@ -9,6 +9,7 @@ import { PicturePoint, clampPicturePan, navigationViewport, shouldStartPicturePa
 import { MAX_RESIDUAL_PIXELS, MAX_RESIDUAL_REGIONS, ResidualRegion, scaleResidualRegions } from "./residual";
 import { buildResidualImageInWorker } from "./residual-client";
 import { decodeNativeFrame, drawNativeFrame, nativeDecoderAvailable } from "./native-decoder";
+import { MAX_QP_REGIONS, QpRegion, qpHeatmapColor, summarizeQpRegions } from "./qp-heatmap";
 
 const MAX_FILE_SIZE = 200 * 1024 * 1024;
 const MAX_INTRA_MODE_SAMPLES = 1_000_000;
@@ -168,10 +169,35 @@ function residualRegionsForFrame(codec: CodecKind, h264: H264SubblockAnalysis | 
   return regions;
 }
 
+function qpRegionsForFrame(codec: CodecKind, h264: H264SubblockAnalysis | null, av1: Av1SubblockAnalysis | null, macroblockColumns: number): QpRegion[] {
+  const regions: QpRegion[] = [];
+  if (codec === "h264") {
+    for (const macroblock of h264?.macroblocks ?? []) {
+      if (regions.length >= MAX_QP_REGIONS) break;
+      if (!macroblock || macroblock.qp === undefined || !macroblockColumns) continue;
+      regions.push({
+        x: (macroblock.address % macroblockColumns) * 16,
+        y: Math.floor(macroblock.address / macroblockColumns) * 16,
+        width: 16,
+        height: 16,
+        value: macroblock.qp,
+      });
+    }
+  } else if (codec === "av1" && av1?.status === "ready") {
+    for (const block of av1.blocks) {
+      if (regions.length >= MAX_QP_REGIONS) break;
+      if (block.qIndex === undefined) continue;
+      regions.push({ x: block.x, y: block.y, width: block.width, height: block.height, value: block.qIndex });
+    }
+  }
+  return regions;
+}
+
 function DecodedPreview({ bytes, analysis, selected, onSelect, onIntraModeDistributionChange, onInterModeDistributionChange, locale }: { bytes: Uint8Array; analysis: Analysis; selected: NalUnit | null; onSelect: (unit: NalUnit) => void; onIntraModeDistributionChange: (distribution: ModeDistribution | null) => void; onInterModeDistributionChange: (distribution: ModeDistribution | null) => void; locale: Locale }) {
   const copy = getCopy(locale);
   const canvas = useRef<HTMLCanvasElement>(null);
   const residualCanvas = useRef<HTMLCanvasElement>(null);
+  const qpCanvas = useRef<HTMLCanvasElement>(null);
   const macroblockCanvas = useRef<HTMLCanvasElement>(null);
   const navigatorCanvas = useRef<HTMLCanvasElement>(null);
   const canvasWrap = useRef<HTMLDivElement>(null);
@@ -182,7 +208,7 @@ function DecodedPreview({ bytes, analysis, selected, onSelect, onIntraModeDistri
   const [showMacroblocks, setShowMacroblocks] = useState(true);
   const [showIntraModes, setShowIntraModes] = useState(true);
   const [showInterModes, setShowInterModes] = useState(true);
-  const [pictureView, setPictureView] = useState<"final" | "residual">("final");
+  const [pictureView, setPictureView] = useState<"final" | "residual" | "qp">("final");
   const [residualGain, setResidualGain] = useState(2);
   const [residualSummary, setResidualSummary] = useState<{ available: boolean; coveredPixels: number; totalPixels: number; intraPixels: number; interPixels: number } | null>(null);
   const [selectedMacroblock, setSelectedMacroblock] = useState(0);
@@ -222,12 +248,16 @@ function DecodedPreview({ bytes, analysis, selected, onSelect, onIntraModeDistri
   const h264InterModesAvailable = useMemo(() => Boolean(h264Subblocks?.macroblocks.some(macroblock => macroblock?.motionVectors?.length)), [h264Subblocks]);
   const interModesAvailable = analysis.codecKind === "av1" ? Boolean(av1Subblocks?.status === "ready" && av1Subblocks.blocks.some(block => block.motionVectors.length)) : analysis.codecKind === "h264" ? h264InterModesAvailable : false;
   const residualRegions = useMemo(() => residualRegionsForFrame(analysis.codecKind, h264Subblocks, av1Subblocks, macroblockColumns), [analysis.codecKind, av1Subblocks, h264Subblocks, macroblockColumns]);
+  const qpRegions = useMemo(() => qpRegionsForFrame(analysis.codecKind, h264Subblocks, av1Subblocks, macroblockColumns), [analysis.codecKind, av1Subblocks, h264Subblocks, macroblockColumns]);
+  const qpRange = analysis.codecKind === "h264" ? { minimum: 0, maximum: 51 } : { minimum: 0, maximum: 255 };
+  const qpSummary = useMemo(() => summarizeQpRegions(qpRegions, qpRange.minimum, qpRange.maximum), [qpRange.maximum, qpRange.minimum, qpRegions]);
   const h264IntraModeSummary = useMemo(() => {
     const counts = new Map<string, number>();
     for (const mode of parsedMacroblock?.intraModes ?? []) counts.set(mode.name, (counts.get(mode.name) ?? 0) + 1);
     return [...counts.entries()].sort((left, right) => right[1] - left[1]).slice(0, 4).map(([name, count]) => `${localizeH264IntraModeName(name, locale)} ×${count}`).join(" · ");
   }, [locale, parsedMacroblock]);
   const av1LeafBlock = av1Subblocks?.status === "ready" ? av1Subblocks.blocks[selectedAv1Block] : undefined;
+  const selectedQp = analysis.codecKind === "h264" ? parsedMacroblock?.qp : av1LeafBlock?.qIndex;
   const av1IntraModeName = av1LeafBlock?.intraMode ? localizeAv1IntraModeName(av1LeafBlock.mode, av1LeafBlock.intraMode.name, locale) : undefined;
   const navigatorViewport = useMemo(() => navigationViewport(viewGeometry.viewportWidth, viewGeometry.viewportHeight, viewGeometry.contentWidth, viewGeometry.contentHeight, zoom, pan), [pan, viewGeometry, zoom]);
   const intraModeDistribution = useMemo<ModeDistribution | null>(() => {
@@ -312,14 +342,46 @@ function DecodedPreview({ bytes, analysis, selected, onSelect, onIntraModeDistri
   }, [setPictureTransform]);
 
   useEffect(() => {
+    const targetCanvas = qpCanvas.current;
+    const sps = analysis.sps;
+    if (!targetCanvas || !sps || state !== "ready") return;
+    const decodedCanvas = canvas.current;
+    const width = decodedCanvas?.width || sps.width;
+    const height = decodedCanvas?.height || sps.height;
+    const totalPixels = width * height;
+    if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width <= 0 || height <= 0 || !Number.isSafeInteger(totalPixels) || totalPixels > MAX_RESIDUAL_PIXELS) return;
+
+    targetCanvas.width = width;
+    targetCanvas.height = height;
+    const context = targetCanvas.getContext("2d");
+    if (!context) return;
+    context.fillStyle = "#292927";
+    context.fillRect(0, 0, width, height);
+    if (!qpSummary) return;
+
+    const scaleX = width / sps.width;
+    const scaleY = height / sps.height;
+    for (const region of qpRegions) {
+      if (![region.x, region.y, region.width, region.height, region.value].every(Number.isFinite) || region.width <= 0 || region.height <= 0 || region.value < qpRange.minimum || region.value > qpRange.maximum) continue;
+      const left = Math.max(0, Math.floor(region.x * scaleX));
+      const top = Math.max(0, Math.floor(region.y * scaleY));
+      const right = Math.min(width, Math.ceil((region.x + region.width) * scaleX));
+      const bottom = Math.min(height, Math.ceil((region.y + region.height) * scaleY));
+      if (right <= left || bottom <= top) continue;
+      context.fillStyle = qpHeatmapColor(region.value, qpRange.minimum, qpRange.maximum);
+      context.fillRect(left, top, right - left, bottom - top);
+    }
+  }, [analysis.sps, qpRange.maximum, qpRange.minimum, qpRegions, qpSummary, state]);
+
+  useEffect(() => {
     if (state !== "ready") return;
-    const source = pictureView === "residual" ? residualCanvas.current : canvas.current;
+    const source = pictureView === "residual" ? residualCanvas.current : pictureView === "qp" ? qpCanvas.current : canvas.current;
     const targetCanvas = navigatorCanvas.current;
     if (!source || !targetCanvas || !source.width || !source.height) return;
     targetCanvas.width = 160;
     targetCanvas.height = Math.max(48, Math.min(112, Math.round(160 * source.height / source.width)));
     targetCanvas.getContext("2d")?.drawImage(source, 0, 0, targetCanvas.width, targetCanvas.height);
-  }, [framePosition, pictureView, residualGain, residualSummary, state, zoom]);
+  }, [framePosition, pictureView, qpSummary, residualGain, residualSummary, state, zoom]);
 
   useEffect(() => {
     const overlay = macroblockCanvas.current;
@@ -671,6 +733,7 @@ function DecodedPreview({ bytes, analysis, selected, onSelect, onIntraModeDistri
       <div ref={frameStage} className="frame-stage" style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }}>
         <canvas ref={canvas} className={`picture-canvas ${pictureView === "final" ? "visible" : ""}`} aria-label={copy.decodedCanvas} />
         <canvas ref={residualCanvas} className={`picture-canvas residual-canvas ${pictureView === "residual" ? "visible" : ""}`} aria-label={copy.residualCanvas} />
+        <canvas ref={qpCanvas} className={`picture-canvas qp-canvas ${pictureView === "qp" ? "visible" : ""}`} aria-label={copy.qpCanvas} />
         <canvas ref={macroblockCanvas} className={`macroblock-overlay ${showMacroblocks ? "visible" : ""}`} role="button" tabIndex={showMacroblocks ? 0 : -1} aria-label={`${blockName} ${copy.gridSelection} ${analysis.codecKind === "av1" && av1LeafBlock ? `${copy.leafBlock} ${av1LeafBlock.id}` : macroblockAddress}`} onClick={event => selectMacroblockAt(event.clientX, event.clientY)} onKeyDown={event => {
           let next = macroblockAddress;
           if (event.key === "ArrowLeft") next--; else if (event.key === "ArrowRight") next++; else if (event.key === "ArrowUp") next -= macroblockColumns; else if (event.key === "ArrowDown") next += macroblockColumns; else return;
@@ -686,6 +749,7 @@ function DecodedPreview({ bytes, analysis, selected, onSelect, onIntraModeDistri
       <div className="picture-view-controls" aria-label={copy.pictureViewControls}>
         <button className={pictureView === "final" ? "active" : ""} aria-pressed={pictureView === "final"} onClick={() => setPictureView("final")}>{copy.finalPicture}</button>
         <button className={pictureView === "residual" ? "active" : ""} aria-pressed={pictureView === "residual"} disabled={!residualSummary?.available} onClick={() => setPictureView("residual")}>{copy.residualPicture}</button>
+        <button className={pictureView === "qp" ? "active" : ""} aria-pressed={pictureView === "qp"} disabled={!qpSummary} onClick={() => setPictureView("qp")}>{copy.qpPicture}</button>
         {pictureView === "residual" && <button className="gain" onClick={() => setResidualGain(value => value === 1 ? 2 : value === 2 ? 4 : 1)} aria-label={copy.residualGain}>{residualGain}×</button>}
       </div>
       <div className="zoom-controls" aria-label={copy.zoomControls}>
@@ -694,6 +758,7 @@ function DecodedPreview({ bytes, analysis, selected, onSelect, onIntraModeDistri
         <button onClick={() => changeZoom(zoom * 1.25)} aria-label={copy.zoomIn}>+</button>
         <button className="fit" onClick={() => setPictureTransform(1, { x: 0, y: 0 })}>{copy.fit}</button>
       </div>
+      {pictureView === "qp" && qpSummary && <div className="qp-legend" aria-label={copy.qpScale}><span>{qpRange.minimum}</span><i /><span>{qpRange.maximum}</span></div>}
       {zoom > 1 && <button className="picture-navigator" aria-label={copy.pictureNavigator} title={copy.pictureNavigatorHint} onPointerDown={event => { event.currentTarget.setPointerCapture(event.pointerId); navigateFromMap(event); }} onPointerMove={event => { if (event.currentTarget.hasPointerCapture(event.pointerId)) navigateFromMap(event); }} onPointerUp={event => { if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId); }}>
         <canvas ref={navigatorCanvas} aria-hidden="true" />
         <i style={{ left: `${navigatorViewport.left * 100}%`, top: `${navigatorViewport.top * 100}%`, width: `${navigatorViewport.width * 100}%`, height: `${navigatorViewport.height * 100}%` }} />
@@ -705,7 +770,7 @@ function DecodedPreview({ bytes, analysis, selected, onSelect, onIntraModeDistri
       <input type="range" min="0" max={Math.max(0, frames.length - 1)} value={framePosition} onChange={event => onSelect(frames[Number(event.target.value)])} aria-label={copy.selectFrame} />
       <button disabled={framePosition >= frames.length - 1} onClick={() => onSelect(frames[framePosition + 1])}>{copy.nextFrame}</button>
     </div>
-    <p className={`residual-note ${residualSummary?.available ? "available" : ""}`} aria-live="polite">{residualSummary?.available ? `${copy.residualApproximation} · ${copy.residualCoverage} ${Math.round(residualSummary.coveredPixels / Math.max(1, residualSummary.totalPixels) * 100)}% · ${copy.residualComposition} I ${residualSummary.intraPixels.toLocaleString(locale)} / P ${residualSummary.interPixels.toLocaleString(locale)} · ${residualGain}×` : residualSummary === null && residualRegions.length > 0 ? copy.residualComputing : copy.residualUnavailable}</p>
+    <p className={`residual-note ${(pictureView === "qp" ? qpSummary : residualSummary?.available) ? "available" : ""}`} aria-live="polite">{pictureView === "qp" ? (qpSummary ? `${copy.qpHeatmapDescription} · ${copy.qpObservedRange} ${qpSummary.minimum}–${qpSummary.maximum} · ${qpSummary.count.toLocaleString(locale)} ${copy.qpBlocks}` : copy.qpUnavailable) : residualSummary?.available ? `${copy.residualApproximation} · ${copy.residualCoverage} ${Math.round(residualSummary.coveredPixels / Math.max(1, residualSummary.totalPixels) * 100)}% · ${copy.residualComposition} I ${residualSummary.intraPixels.toLocaleString(locale)} / P ${residualSummary.interPixels.toLocaleString(locale)} · ${residualGain}×` : residualSummary === null && residualRegions.length > 0 ? copy.residualComputing : copy.residualUnavailable}</p>
     <div className="macroblock-toolbar"><div className="overlay-toggles"><button className={showMacroblocks ? "active" : ""} aria-pressed={showMacroblocks} onClick={() => setShowMacroblocks(value => !value)}><i />{blockGridLabel} {showMacroblocks ? "ON" : "OFF"}</button>{(analysis.codecKind === "av1" || analysis.codecKind === "h264") && <><button className={showIntraModes ? "active" : ""} aria-pressed={showIntraModes} disabled={!showMacroblocks || !intraModesAvailable} onClick={() => setShowIntraModes(value => !value)}><i />{copy.intraModes} {showIntraModes ? "ON" : "OFF"}</button><button className={showInterModes ? "active inter" : ""} aria-pressed={showInterModes} disabled={!showMacroblocks || !interModesAvailable} onClick={() => setShowInterModes(value => !value)}><i />{copy.interModes} {showInterModes ? "ON" : "OFF"}</button></>}</div><span>{analysis.codecKind === "h264" && h264Subblocks ? `${h264Subblocks.entropyMode ?? "H.264"} · ${h264StatusMessage}${showMacroblocks && showIntraModes && h264IntraModesAvailable ? ` · ${copy.directionOverlay}` : ""}${showMacroblocks && showInterModes && h264InterModesAvailable ? ` · ${copy.motionOverlay}` : ""}` : analysis.codecKind === "av1" ? (av1SubblocksLoading ? copy.entropyDecodingAv1 : `${av1StatusMessage}${showMacroblocks && showIntraModes && av1Subblocks?.status === "ready" ? ` · ${copy.directionOverlay}` : ""}${showMacroblocks && showInterModes && interModesAvailable ? ` · ${copy.motionOverlay}` : ""}`) : `${macroblockColumns} × ${macroblockRows} ${blockSize}×${blockSize} ${copy.lumaBlocks} · ${copy.clickToSelect}`}</span></div>
     {showMacroblocks && macroblockCount > 0 && <div className="macroblock-info">
       <div><span>{blockName} {copy.address}</span><strong>#{macroblockAddress}</strong><small>{copy.rasterOrder}</small></div>
@@ -714,10 +779,11 @@ function DecodedPreview({ bytes, analysis, selected, onSelect, onIntraModeDistri
       <div><span>{copy.partition}</span><strong>{av1LeafBlock ? `${av1LeafBlock.sizeName} ${copy.leafBlock}` : parsedMacroblock?.typeName ?? `${blockSize}×${blockSize} ${blockName}`}</strong><small>{av1LeafBlock ? `${copy.decodedBlock} #${av1LeafBlock.id} · ${copy.belongsToSb} #${av1LeafBlock.superblockAddress}` : parsedMacroblock ? `${parsedMacroblock.partitions.length} ${copy.partitions} · ${parsedMacroblock.partitions.map(partition => `${partition.width}×${partition.height}`).join(" / ")}` : analysis.codecKind === "h264" ? (h264StatusMessage || copy.notParsed) : (av1StatusMessage || copy.notParsed)}</small></div>
       <div><span>{analysis.unitName} {copy.unit}</span><strong>{blockUnit ? `#${blockUnit.index} · ${analysis.codecKind === "av1" ? "O" : "T"}${blockUnit.type}` : "—"}</strong><small>{blockUnit ? `${copy.layer} ${blockUnit.layerId ?? 0} · 0x${blockUnit.offset.toString(16)}` : "—"}</small></div>
       <div><span>{copy.chromaCoverage}</span><strong>{analysis.sps?.chromaFormat ?? "—"}</strong><small>{analysis.sps?.chromaFormat === "4:2:0" ? copy.chroma420 : copy.chromaFromSps}</small></div>
+      {(analysis.codecKind === "h264" || analysis.codecKind === "av1") && <div><span>{copy.quantizationParameter}</span><strong>{selectedQp !== undefined ? `${analysis.codecKind === "h264" ? "QP" : "qindex"} ${selectedQp}` : "—"}</strong><small>{analysis.codecKind === "h264" ? copy.h264QpDetail : copy.av1QpDetail}</small></div>}
       {analysis.codecKind === "h264" && <div><span>{copy.macroblockSyntax}</span><strong>{parsedMacroblock ? `${parsedMacroblock.prediction}${parsedMacroblock.skipped ? " · SKIP" : ""}` : "—"}</strong><small>{parsedMacroblock ? `mb_type ${parsedMacroblock.rawType ?? "skip"} · CBP ${parsedMacroblock.codedBlockPattern ?? 0}${parsedMacroblock.qpDelta !== undefined ? ` · ΔQP ${parsedMacroblock.qpDelta}` : ""}` : copy.noCavlc}</small></div>}
       {analysis.codecKind === "h264" && parsedMacroblock?.intraModes?.length && <div><span>{copy.intraPrediction}</span><strong>{h264IntraModeSummary}</strong><small>{parsedMacroblock.intraModes.length} {copy.predictionBlocks} · {parsedMacroblock.typeName}</small></div>}
       {analysis.codecKind === "h264" && parsedMacroblock?.motionVectors?.length && <div><span>{copy.interPrediction}</span><strong>{parsedMacroblock.motionVectors.map(vector => `L0 ref ${vector.reference} · MV (${(vector.mvX / 4).toFixed(2)}, ${(vector.mvY / 4).toFixed(2)}) px`).join(" · ")}</strong><small>{parsedMacroblock.motionVectors.map(vector => `${vector.mode}: qpel (${vector.mvX}, ${vector.mvY}) · MVD (${vector.mvdX}, ${vector.mvdY})`).join(" · ")}</small></div>}
-      {analysis.codecKind === "av1" && <div><span>{av1LeafBlock?.intraMode ? copy.intraPrediction : copy.av1BlockSyntax}</span><strong>{av1LeafBlock ? `${av1IntraModeName ?? `${av1LeafBlock.mode} · ${copy.interPrediction}`}${av1LeafBlock.intraMode ? ` · ${av1LeafBlock.intraMode.directional ? `${copy.nominalDirection} ${av1LeafBlock.intraMode.nominalAngle}°` : copy.nonDirectional}` : ""}${av1LeafBlock.skipped ? " · SKIP" : ""}` : "—"}</strong><small>{av1LeafBlock ? `mode ${av1LeafBlock.mode} · TX ${av1LeafBlock.transformSize} · base_q_idx ${av1Subblocks?.baseQIndex ?? "—"} · frame_type ${av1Subblocks?.frameType ?? "—"}` : av1SubblocksLoading ? copy.decodingWithLibaom : av1StatusMessage || copy.noResult}</small></div>}
+      {analysis.codecKind === "av1" && <div><span>{av1LeafBlock?.intraMode ? copy.intraPrediction : copy.av1BlockSyntax}</span><strong>{av1LeafBlock ? `${av1IntraModeName ?? `${av1LeafBlock.mode} · ${copy.interPrediction}`}${av1LeafBlock.intraMode ? ` · ${av1LeafBlock.intraMode.directional ? `${copy.nominalDirection} ${av1LeafBlock.intraMode.nominalAngle}°` : copy.nonDirectional}` : ""}${av1LeafBlock.skipped ? " · SKIP" : ""}` : "—"}</strong><small>{av1LeafBlock ? `mode ${av1LeafBlock.mode} · TX ${av1LeafBlock.transformSize} · qindex ${av1LeafBlock.qIndex ?? "—"} · base_q_idx ${av1Subblocks?.baseQIndex ?? "—"} · frame_type ${av1Subblocks?.frameType ?? "—"}` : av1SubblocksLoading ? copy.decodingWithLibaom : av1StatusMessage || copy.noResult}</small></div>}
       {analysis.codecKind === "av1" && av1LeafBlock?.motionVectors.length ? <div><span>{copy.motionVectors}</span><strong>{av1LeafBlock.motionVectors.map(vector => `${vector.referenceName} · MV (${(vector.mvX / 8).toFixed(3)}, ${(vector.mvY / 8).toFixed(3)}) px`).join(" · ")}</strong><small>{av1LeafBlock.motionVectors.map(vector => `1/8-pel (${vector.mvX}, ${vector.mvY}) · ref ${vector.reference}`).join(" · ")}</small></div> : null}
     </div>}
   </section>;

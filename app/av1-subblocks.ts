@@ -47,6 +47,7 @@ export type Av1LeafBlock = {
   intraMode?: Av1IntraModeInfo;
   motionVectors: Av1MotionVector[];
   transformSize: string;
+  qIndex?: number;
   skipped: boolean;
   skipName: string;
   superblockAddress: number;
@@ -151,11 +152,13 @@ export function convertAv1InspectionFrame(raw: unknown, analysis: Analysis): Av1
   const transformSize = numericMatrix(frame.transformSize, "transformSize");
   const mode = numericMatrix(frame.mode, "mode");
   const skip = numericMatrix(frame.skip, "skip");
+  const qIndex = frame.delta_q === undefined ? undefined : numericMatrix(frame.delta_q, "delta_q");
   const miRows = blockSize.length;
   const miColumns = blockSize[0].length;
-  for (const matrix of [transformSize, mode, skip]) {
+  for (const matrix of [transformSize, mode, skip, ...(qIndex ? [qIndex] : [])]) {
     if (matrix.length !== miRows || matrix[0].length !== miColumns) throw new Error("AV1 inspection 矩阵尺寸不一致");
   }
+  if (qIndex?.some(row => row.some(value => value < 0 || value > 255))) throw new Error("AV1 qindex 超出 0–255 范围");
 
   const blockNames = invert(inspectionMap(frame.blockSizeMap, "blockSizeMap"));
   const transformNames = invert(inspectionMap(frame.transformSizeMap, "transformSizeMap"));
@@ -169,6 +172,8 @@ export function convertAv1InspectionFrame(raw: unknown, analysis: Analysis): Av1
   const tileRows = tileBoundaries(frame.tileRows, miRows);
   const visited = new Uint8Array(miRows * miColumns);
   const blocks: Av1LeafBlock[] = [];
+  const baseQIndex = numberField(frame, "baseQIndex");
+  if (baseQIndex !== undefined && (baseQIndex < 0 || baseQIndex > 255)) throw new Error("AV1 base_q_idx 超出 0–255 范围");
   const pictureWidth = analysis.sps.width;
   const pictureHeight = analysis.sps.height;
   const superblockSize = analysis.blockSize;
@@ -220,6 +225,7 @@ export function convertAv1InspectionFrame(raw: unknown, analysis: Analysis): Av1
         intraMode,
         motionVectors: blockMotionVectors,
         transformSize: (rawTransform ?? `TX_${transformSize[row][column]}`).replace(/^TX_/, ""),
+        qIndex: qIndex?.[row][column] ?? baseQIndex,
         skipped: rawSkip === "SKIP" || skip[row][column] === 1,
         skipName: rawSkip ?? `SKIP_${skip[row][column]}`,
         superblockAddress: Math.floor(y / superblockSize) * superblockColumns + Math.floor(x / superblockSize),
@@ -236,7 +242,7 @@ export function convertAv1InspectionFrame(raw: unknown, analysis: Analysis): Av1
     miColumns,
     miRows,
     frameType: numberField(frame, "frameType"),
-    baseQIndex: numberField(frame, "baseQIndex"),
+    baseQIndex,
     tileColumns: tileColumns.length - 1,
     tileRows: tileRows.length - 1,
   };

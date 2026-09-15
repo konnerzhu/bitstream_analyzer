@@ -17,7 +17,7 @@ export type H264MotionVector = {
 export type H264Macroblock = {
   address: number; sliceUnitIndex: number; sliceType: string; rawType?: number;
   typeName: string; prediction: "Intra" | "Inter" | "Skip" | "PCM";
-  skipped: boolean; codedBlockPattern?: number; qpDelta?: number;
+  skipped: boolean; codedBlockPattern?: number; qpDelta?: number; qp?: number;
   partitions: H264Partition[];
   intraModes?: H264IntraMode[];
   motionVectors?: H264MotionVector[];
@@ -40,12 +40,12 @@ type PpsSyntax = {
   id: number; spsId: number; entropyCodingMode: boolean; bottomFieldPicOrderPresent: boolean;
   numSliceGroups: number; numRefL0: number; numRefL1: number; weightedPred: boolean;
   weightedBipredIdc: number; redundantPicCntPresent: boolean; deblockingFilterControlPresent: boolean;
-  transform8x8Mode: boolean;
+  transform8x8Mode: boolean; picInitQpMinus26: number;
 };
 
 type SliceSyntax = {
   firstMb: number; sliceType: "P" | "B" | "I" | "SP" | "SI"; pps: PpsSyntax; sps: SpsSyntax;
-  numRefL0: number; numRefL1: number; reader: BitReader;
+  numRefL0: number; numRefL1: number; initialQp: number; reader: BitReader;
 };
 
 type VlcValue = { bits: string; values: number[] };
@@ -155,7 +155,8 @@ function parsePpsSyntax(payload: Uint8Array): PpsSyntax {
   if (numSliceGroups !== 1) throw new Error("暂不支持 FMO 多 slice group");
   const numRefL0 = reader.readUE() + 1, numRefL1 = reader.readUE() + 1;
   const weightedPred = Boolean(reader.readBit()), weightedBipredIdc = reader.readBits(2);
-  reader.readSE(); reader.readSE(); reader.readSE();
+  const picInitQpMinus26 = reader.readSE(); reader.readSE(); reader.readSE();
+  if (picInitQpMinus26 < -26 || picInitQpMinus26 > 25) throw new Error("PPS 初始 QP 超出 H.264 范围");
   const deblockingFilterControlPresent = Boolean(reader.readBit()); reader.readBit();
   const redundantPicCntPresent = Boolean(reader.readBit());
   let transform8x8Mode = false;
@@ -164,7 +165,7 @@ function parsePpsSyntax(payload: Uint8Array): PpsSyntax {
     if (reader.readBit()) throw new Error("暂不支持 PPS pic_scaling_matrix");
     if (reader.moreRbspData()) reader.readSE();
   }
-  return { id, spsId, entropyCodingMode, bottomFieldPicOrderPresent, numSliceGroups, numRefL0, numRefL1, weightedPred, weightedBipredIdc, redundantPicCntPresent, deblockingFilterControlPresent, transform8x8Mode };
+  return { id, spsId, entropyCodingMode, bottomFieldPicOrderPresent, numSliceGroups, numRefL0, numRefL1, weightedPred, weightedBipredIdc, redundantPicCntPresent, deblockingFilterControlPresent, transform8x8Mode, picInitQpMinus26 };
 }
 
 function skipRefPicListModification(reader: BitReader, sliceType: string) {
@@ -215,10 +216,17 @@ function parseSliceHeader(payload: Uint8Array, unit: NalUnit, ppsMap: Map<number
   if ((pps.weightedPred && (sliceType === "P" || sliceType === "SP")) || (pps.weightedBipredIdc === 1 && sliceType === "B")) skipPredWeightTable(reader, sps, numRefL0, numRefL1, sliceType);
   skipDecRefPicMarking(reader, unit.type, unit.refIdc);
   if (pps.entropyCodingMode && sliceType !== "I" && sliceType !== "SI") reader.readUE();
-  reader.readSE();
+  const sliceQpDelta = reader.readSE();
+  const initialQp = 26 + pps.picInitQpMinus26 + sliceQpDelta;
+  if (!Number.isSafeInteger(initialQp) || initialQp < 0 || initialQp > 51) throw new Error("Slice 初始 QP 超出 H.264 8-bit 范围");
   if (sliceType === "SP" || sliceType === "SI") { if (sliceType === "SP") reader.readBit(); reader.readSE(); }
   if (pps.deblockingFilterControlPresent) { const disable = reader.readUE(); if (disable !== 1) { reader.readSE(); reader.readSE(); } }
-  return { firstMb, sliceType, pps, sps, numRefL0, numRefL1, reader };
+  return { firstMb, sliceType, pps, sps, numRefL0, numRefL1, initialQp, reader };
+}
+
+export function updateH264Qp(previousQp: number, delta: number) {
+  if (!Number.isSafeInteger(previousQp) || previousQp < 0 || previousQp > 51 || !Number.isSafeInteger(delta) || delta < -26 || delta > 25) throw new Error("H.264 QP 或 ΔQP 超出范围");
+  return (previousQp + delta + 52) % 52;
 }
 
 function rectanglePartitions(mode: string): H264Partition[] {
@@ -442,15 +450,17 @@ export function analyzeH264Subblocks(bytes: Uint8Array, analysis: Analysis, fram
       // CAVLC neighbouring blocks across a slice boundary are unavailable, so each slice owns
       // a fresh coefficient-context grid even though the output macroblock array is per picture.
       const picture=new CavlcPicture(slice.sps.widthMbs,heightMbs);
-      let address=slice.firstMb;
+      let address=slice.firstMb,currentQp=slice.initialQp;
       try{
         while(slice.reader.moreRbspData()&&address<count){
           if(slice.sliceType==="P"){
             const skipRun=slice.reader.readUE();if(skipRun>count-address)throw new Error("mb_skip_run 超出图像范围");
-            for(let i=0;i<skipRun;i++,address++){picture.resetMacroblock(address);const motion=picture.setSkipMotion(address);macroblocks[address]={address,sliceUnitIndex:unit.index,sliceType:"P",typeName:"P_SKIP",prediction:"Skip",skipped:true,partitions:rectanglePartitions("16×16"),motionVectors:[motion]};}
+            for(let i=0;i<skipRun;i++,address++){picture.resetMacroblock(address);const motion=picture.setSkipMotion(address);macroblocks[address]={address,sliceUnitIndex:unit.index,sliceType:"P",typeName:"P_SKIP",prediction:"Skip",skipped:true,qp:currentQp,partitions:rectanglePartitions("16×16"),motionVectors:[motion]};}
             if(!slice.reader.moreRbspData()||address>=count)break;
           }
-          macroblocks[address]=parseMacroblock(slice.reader,slice,address,unit.index,picture);address++;
+          const macroblock=parseMacroblock(slice.reader,slice,address,unit.index,picture);
+          if(macroblock.qpDelta!==undefined)currentQp=updateH264Qp(currentQp,macroblock.qpDelta);
+          macroblock.qp=currentQp;macroblocks[address]=macroblock;address++;
         }
       }catch(error){reason=`NAL #${unit.index}: ${error instanceof Error?error.message:"宏块解析失败"}`;}
     }

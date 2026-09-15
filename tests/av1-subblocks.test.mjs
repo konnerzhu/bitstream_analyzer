@@ -34,6 +34,7 @@ function frameFixture() {
     mode: Array.from({ length: 4 }, () => [0, 0, 0, 0, 12, 12, 3, 3]),
     skipMap: { NO_SKIP: 0, SKIP: 1 },
     skip: Array.from({ length: 4 }, () => [0, 0, 0, 0, 1, 1, 1, 1]),
+    delta_q: Array.from({ length: 4 }, () => [80, 80, 80, 80, 160, 160, 220, 220]),
     tileCols: [0, 4, 8],
     tileRows: [0, 4],
     frameType: 0,
@@ -60,6 +61,7 @@ test("deduplicates AV1 MI maps into entropy-decoded leaf blocks", async () => {
     assert.equal(result.blocks[1].transformSize, "8X8");
     assert.equal(result.blocks[1].skipped, true);
     assert.equal(result.blocks[1].tileColumn, 1);
+    assert.deepEqual(result.blocks.map(block => block.qIndex), [80, 160, 220]);
     assert.equal(result.baseQIndex, 217);
   } finally {
     await parser.dispose();
@@ -123,6 +125,17 @@ test("rejects inconsistent inspection matrix dimensions", async () => {
     const frame = frameFixture();
     frame.skip = [[0]];
     assert.throws(() => parser.converter.convertAv1InspectionFrame(frame, analysis), /矩阵尺寸不一致/);
+  } finally {
+    await parser.dispose();
+  }
+});
+
+test("rejects out-of-range AV1 per-block qindex data", async () => {
+  const parser = await loadConverter();
+  try {
+    const frame = frameFixture();
+    frame.delta_q[0][0] = 256;
+    assert.throws(() => parser.converter.convertAv1InspectionFrame(frame, analysis), /qindex 超出 0–255 范围/);
   } finally {
     await parser.dispose();
   }
