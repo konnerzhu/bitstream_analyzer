@@ -13,7 +13,7 @@ import { MAX_QP_REGIONS, QpRegion, qpHeatmapColor, summarizeQpRegions } from "./
 
 const MAX_FILE_SIZE = 200 * 1024 * 1024;
 const MAX_INTRA_MODE_SAMPLES = 1_000_000;
-const ACCEPTED_FILES = ".h264,.264,.avc,.h265,.265,.hevc,.h266,.266,.vvc,.av1,.obu,.ivf,video/h264,video/h265,video/av1";
+const ACCEPTED_FILES = `${SUPPORTED_EXTENSIONS.join(",")},video/h264,video/h265,video/av1`;
 
 type ModeDistribution = {
   items: Array<{ key: string; name: string; count: number }>;

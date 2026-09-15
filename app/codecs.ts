@@ -20,6 +20,7 @@ export const SUPPORTED_EXTENSIONS = [
   ".h265", ".265", ".hevc",
   ".h266", ".266", ".vvc",
   ".av1", ".obu", ".ivf",
+  ".data",
 ];
 
 const HEVC_NAMES = new Map<number, string>([
