@@ -14,6 +14,7 @@ import { MAX_QP_REGIONS, QpRegion, qpHeatmapColor, summarizeQpRegions } from "./
 const MAX_FILE_SIZE = 200 * 1024 * 1024;
 const MAX_INTRA_MODE_SAMPLES = 1_000_000;
 const ACCEPTED_FILES = `${SUPPORTED_EXTENSIONS.join(",")},video/h264,video/h265,video/av1`;
+const QP_HEATMAP_OPACITY = .58;
 
 type ModeDistribution = {
   items: Array<{ key: string; name: string; count: number }>;
@@ -355,12 +356,18 @@ function DecodedPreview({ bytes, analysis, selected, onSelect, onIntraModeDistri
     targetCanvas.height = height;
     const context = targetCanvas.getContext("2d");
     if (!context) return;
-    context.fillStyle = "#292927";
-    context.fillRect(0, 0, width, height);
+    if (decodedCanvas?.width && decodedCanvas.height) {
+      context.drawImage(decodedCanvas, 0, 0, width, height);
+    } else {
+      context.fillStyle = "#292927";
+      context.fillRect(0, 0, width, height);
+    }
     if (!qpSummary) return;
 
     const scaleX = width / sps.width;
     const scaleY = height / sps.height;
+    // Keep picture structure visible even when the independently controlled block grid is hidden.
+    context.globalAlpha = QP_HEATMAP_OPACITY;
     for (const region of qpRegions) {
       if (![region.x, region.y, region.width, region.height, region.value].every(Number.isFinite) || region.width <= 0 || region.height <= 0 || region.value < qpRange.minimum || region.value > qpRange.maximum) continue;
       const left = Math.max(0, Math.floor(region.x * scaleX));
@@ -371,6 +378,7 @@ function DecodedPreview({ bytes, analysis, selected, onSelect, onIntraModeDistri
       context.fillStyle = qpHeatmapColor(region.value, qpRange.minimum, qpRange.maximum);
       context.fillRect(left, top, right - left, bottom - top);
     }
+    context.globalAlpha = 1;
   }, [analysis.sps, qpRange.maximum, qpRange.minimum, qpRegions, qpSummary, state]);
 
   useEffect(() => {
