@@ -20,8 +20,11 @@ native_output="$project_root/.artifacts/desktop/native-win"
 license_output="$project_root/.artifacts/desktop/native-licenses"
 meson_cross="$project_root/scripts/toolchains/windows-x64-mingw.ini"
 cmake_toolchain="$project_root/scripts/toolchains/windows-x64-mingw.cmake"
+inspection_dir="$project_root/native/h264-inspector/ffmpeg"
+inspection_patch="$inspection_dir/ffmpeg-7.1.5-bitscope-inspection.patch"
+inspection_stamp="$ffmpeg_source/.bitscope-inspection-v2"
 
-for tool in curl shasum tar make cmake meson ninja pkg-config \
+for tool in curl shasum tar patch make cmake meson ninja pkg-config \
   x86_64-w64-mingw32-gcc x86_64-w64-mingw32-g++ x86_64-w64-mingw32-ar \
   x86_64-w64-mingw32-strip x86_64-w64-mingw32-objdump; do
   command -v "$tool" >/dev/null 2>&1 || { echo "Missing Windows cross-build tool: $tool" >&2; exit 1; }
@@ -52,7 +55,9 @@ download_and_verify \
 
 ffmpeg_pc="$ffmpeg_prefix/lib/pkgconfig/libavcodec.pc"
 if [ -f "$ffmpeg_source/config.h" ] || [ -d "$ffmpeg_prefix" ]; then
-  if [ ! -f "$ffmpeg_prefix/include/libavcodec/avcodec.h" ] || \
+  if [ ! -f "$inspection_stamp" ] || \
+     [ ! -f "$ffmpeg_prefix/include/libavcodec/avcodec.h" ] || \
+     [ ! -f "$ffmpeg_prefix/include/libavcodec/bitscope_h264_inspection.h" ] || \
      [ ! -f "$ffmpeg_prefix/lib/libavcodec.a" ] || \
      [ ! -f "$ffmpeg_pc" ] || \
      ! grep -Fqx "prefix=$ffmpeg_prefix" "$ffmpeg_pc"; then
@@ -77,6 +82,14 @@ if [ ! -d "$ffmpeg_source" ]; then
 fi
 if [ ! -d "$dav1d_source" ]; then
   tar -xf "$dav1d_archive" -C "$work_root"
+fi
+
+if [ ! -f "$inspection_stamp" ]; then
+  cp "$inspection_dir/bitscope_h264_inspection.h" "$ffmpeg_source/libavcodec/"
+  cp "$inspection_dir/bitscope_h264_inspection_internal.h" "$ffmpeg_source/libavcodec/"
+  cp "$inspection_dir/bitscope_h264_inspection.c" "$ffmpeg_source/libavcodec/"
+  (cd "$ffmpeg_source" && patch -p1 < "$inspection_patch")
+  touch "$inspection_stamp"
 fi
 
 if [ ! -f "$ffmpeg_source/config.h" ]; then

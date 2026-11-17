@@ -41,6 +41,7 @@ The desktop packages are self-contained; users do not need Node.js, npm, FFmpeg,
 - H.264 and AV1 intra-mode names and direction paths
 - Inter prediction modes and motion-vector overlays
 - Native H.264/AV1 decoding in the desktop application
+- Native H.264 prediction, coefficient, residual, pre-filter, final-pixel, and motion-vector inspection hooks
 - English and Simplified Chinese interfaces
 
 ## Supported input
@@ -107,7 +108,7 @@ Generated files and installers are written below `.artifacts/`. Release builds u
 - H.264 browser subblock parsing currently targets progressive 8-bit 4:2:0 CAVLC I/P slices; CABAC, B slices, FMO, and interlaced/MBAFF pictures need deeper parsing.
 - AV1 detailed block inspection currently requires IVF; raw OBU streams retain the structural Superblock grid.
 - HEVC and VVC currently expose structural grids rather than entropy-decoded subpartitions.
-- Exact prediction, coefficients, pre-deblocking pixels, and decoder-native residual planes require additional decoder inspection hooks.
+- H.264 native inspection hooks are available to the callback ABI; prediction/pre-filter/coefficient visual panels are not yet exposed in the desktop UI.
 
 ## Contributing
 

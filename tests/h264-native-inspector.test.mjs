@@ -63,8 +63,17 @@ test(
       assert.ok(frames[1].motionVectors > 0);
       assert.equal(summary.frames, 2);
       assert.ok(summary.motionVectors > 0);
-      assert.equal(summary.abiVersion, 2);
-      assert.equal(summary.availableStages, 3);
+      assert.equal(summary.abiVersion, 3);
+      assert.ok(summary.availableStages === 3 || summary.availableStages === 63);
+      if (summary.availableStages === 63) {
+        assert.ok(frames.every(frame => frame.availableStages === 63));
+        assert.ok(frames.every(frame => frame.predictedPlanes === 3));
+        assert.ok(frames.every(frame => frame.residualPlanes === 3));
+        assert.ok(frames.every(frame => frame.preFilterPlanes === 3));
+        assert.ok(frames.every(frame => frame.transformBlocks > 0));
+        assert.ok(frames.every(frame => frame.coefficients > 0));
+        assert.ok(frames.every(frame => frame.incompleteStages === 0));
+      }
 
       const packedPath = join(output, "selected.planes");
       const selectedRecords = execFileSync(executable, ["--frame", "1", "--output", packedPath, fixture], {

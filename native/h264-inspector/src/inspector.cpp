@@ -11,9 +11,16 @@
 
 extern "C" {
 #include <libavcodec/avcodec.h>
+#if __has_include(<libavcodec/bitscope_h264_inspection.h>)
+#include <libavcodec/bitscope_h264_inspection.h>
+#define BITSCOPE_HAS_FFMPEG_INSPECTION 1
+#else
+#define BITSCOPE_HAS_FFMPEG_INSPECTION 0
+#endif
 #include <libavutil/error.h>
 #include <libavutil/frame.h>
 #include <libavutil/motion_vector.h>
+#include <libavutil/opt.h>
 #include <libavutil/pixdesc.h>
 }
 
@@ -24,7 +31,17 @@ constexpr uint32_t kDefaultMaxDimension = 8192u;
 constexpr uint64_t kDefaultMaxPixels = 8192ull * 4320ull;
 constexpr uint32_t kDefaultMaxFrames = 10000u;
 constexpr uint32_t kDefaultMaxMotionVectors = 1000000u;
-constexpr uint32_t kAvailableStages = BITSCOPE_H264_STAGE_FINAL_PIXELS | BITSCOPE_H264_STAGE_MOTION_VECTORS;
+constexpr uint32_t kDefaultMaxTransformBlocks = 1000000u;
+constexpr uint32_t kDefaultMaxCoefficients = 16000000u;
+constexpr uint32_t kRequestedNativeInspectionStages =
+    BITSCOPE_H264_STAGE_PREDICTED_PIXELS |
+    BITSCOPE_H264_STAGE_RESIDUAL_PIXELS |
+    BITSCOPE_H264_STAGE_TRANSFORM_COEFFICIENTS |
+    BITSCOPE_H264_STAGE_PRE_FILTER_PIXELS;
+constexpr uint32_t kNativeInspectionStages =
+    BITSCOPE_HAS_FFMPEG_INSPECTION ? kRequestedNativeInspectionStages : 0u;
+constexpr uint32_t kAvailableStages = BITSCOPE_H264_STAGE_FINAL_PIXELS |
+    BITSCOPE_H264_STAGE_MOTION_VECTORS | kNativeInspectionStages;
 
 struct CodecContextDeleter {
   void operator()(AVCodecContext* context) const {
@@ -53,6 +70,8 @@ struct DecodeState {
   const BitscopeH264Observer* observer = nullptr;
   uint32_t frame_count = 0;
   std::vector<BitscopeH264MotionVector> motion_vectors;
+  std::vector<int32_t> coefficients;
+  std::vector<BitscopeH264TransformBlock> transform_blocks;
 };
 
 void WriteError(char* destination, size_t capacity, std::string_view message) {
@@ -80,13 +99,16 @@ bool HasAnnexBStartCode(const uint8_t* data, size_t size) {
 BitscopeH264Limits ResolveLimits(const BitscopeH264Limits* supplied) {
   BitscopeH264Limits result{
       sizeof(BitscopeH264Limits), kDefaultMaxInputBytes, kDefaultMaxDimension,
-      kDefaultMaxPixels, kDefaultMaxFrames, kDefaultMaxMotionVectors};
+      kDefaultMaxPixels, kDefaultMaxFrames, kDefaultMaxMotionVectors,
+      kDefaultMaxTransformBlocks, kDefaultMaxCoefficients};
   if (supplied == nullptr) return result;
   result.max_input_bytes = supplied->max_input_bytes;
   result.max_dimension = supplied->max_dimension;
   result.max_pixels = supplied->max_pixels;
   result.max_frames = supplied->max_frames;
   result.max_motion_vectors_per_frame = supplied->max_motion_vectors_per_frame;
+  result.max_transform_blocks_per_frame = supplied->max_transform_blocks_per_frame;
+  result.max_coefficients_per_frame = supplied->max_coefficients_per_frame;
   return result;
 }
 
@@ -114,6 +136,8 @@ int InspectFrame(const AVFrame* decoded, DecodeState* state, std::string* error)
   if (validation != BITSCOPE_H264_OK) return validation;
 
   state->motion_vectors.clear();
+  state->coefficients.clear();
+  state->transform_blocks.clear();
   const AVFrameSideData* side_data = av_frame_get_side_data(decoded, AV_FRAME_DATA_MOTION_VECTORS);
   if (side_data != nullptr) {
     if (side_data->size % sizeof(AVMotionVector) != 0) {
@@ -145,11 +169,105 @@ int InspectFrame(const AVFrame* decoded, DecodeState* state, std::string* error)
   frame.picture_type = decoded->pict_type;
   frame.presentation_timestamp = decoded->pts;
   frame.key_frame = (decoded->flags & AV_FRAME_FLAG_KEY) != 0 ? 1 : 0;
-  frame.available_stages = kAvailableStages;
+  frame.available_stages = BITSCOPE_H264_STAGE_FINAL_PIXELS |
+                           BITSCOPE_H264_STAGE_MOTION_VECTORS;
   frame.motion_vectors = state->motion_vectors.empty() ? nullptr : state->motion_vectors.data();
   frame.motion_vector_count = static_cast<uint32_t>(state->motion_vectors.size());
   frame.color_range = decoded->color_range;
   frame.matrix_coefficients = decoded->colorspace;
+
+#if BITSCOPE_HAS_FFMPEG_INSPECTION
+  const AVH264Inspection* inspection = av_h264_get_inspection(decoded);
+  if (inspection == nullptr || inspection->version != AV_H264_INSPECTION_VERSION ||
+      inspection->struct_size < sizeof(AVH264Inspection)) {
+    *error = "bundled FFmpeg decoder did not return H.264 inspection data";
+    return BITSCOPE_H264_DECODE_ERROR;
+  }
+  if ((inspection->plane_count != 1 && inspection->plane_count != 3) ||
+      inspection->pixel_shift > 1) {
+    *error = "decoder returned malformed H.264 inspection plane metadata";
+    return BITSCOPE_H264_DECODE_ERROR;
+  }
+  frame.available_stages |= inspection->available_stages & kNativeInspectionStages;
+  frame.incomplete_stages = inspection->incomplete_stages & kNativeInspectionStages;
+  for (uint8_t plane = 0; plane < inspection->plane_count && plane < 4; ++plane) {
+    const AVH264InspectionPlane& predicted = inspection->predicted_planes[plane];
+    if (predicted.data != nullptr) {
+      if (predicted.width == 0 || predicted.height == 0 || predicted.stride <= 0 ||
+          predicted.stride > std::numeric_limits<int32_t>::max() ||
+          predicted.width > state->limits.max_dimension ||
+          predicted.height > state->limits.max_dimension ||
+          static_cast<uint64_t>(predicted.width) * (1u << inspection->pixel_shift) >
+              static_cast<uint64_t>(predicted.stride)) {
+        *error = "decoder returned malformed predicted-plane bounds";
+        return BITSCOPE_H264_DECODE_ERROR;
+      }
+      frame.predicted_planes[plane] = {
+          predicted.data, static_cast<int32_t>(predicted.stride),
+          predicted.width, predicted.height};
+      frame.predicted_plane_count = static_cast<uint8_t>(plane + 1);
+    }
+    const AVH264InspectionResidualPlane& residual = inspection->residual_planes[plane];
+    if (residual.data != nullptr) {
+      if (residual.width == 0 || residual.height == 0 || residual.stride_samples <= 0 ||
+          residual.stride_samples > std::numeric_limits<int32_t>::max() ||
+          residual.width > state->limits.max_dimension ||
+          residual.height > state->limits.max_dimension ||
+          residual.width > static_cast<uint64_t>(residual.stride_samples)) {
+        *error = "decoder returned malformed residual-plane bounds";
+        return BITSCOPE_H264_DECODE_ERROR;
+      }
+      frame.residual_planes[plane] = {
+          residual.data, static_cast<int32_t>(residual.stride_samples),
+          residual.width, residual.height};
+      frame.residual_plane_count = static_cast<uint8_t>(plane + 1);
+    }
+    const AVH264InspectionPlane& pre_filter = inspection->pre_filter_planes[plane];
+    if (pre_filter.data != nullptr) {
+      if (pre_filter.width == 0 || pre_filter.height == 0 || pre_filter.stride <= 0 ||
+          pre_filter.stride > std::numeric_limits<int32_t>::max() ||
+          pre_filter.width > state->limits.max_dimension ||
+          pre_filter.height > state->limits.max_dimension ||
+          static_cast<uint64_t>(pre_filter.width) * (1u << inspection->pixel_shift) >
+              static_cast<uint64_t>(pre_filter.stride)) {
+        *error = "decoder returned malformed pre-filter-plane bounds";
+        return BITSCOPE_H264_DECODE_ERROR;
+      }
+      frame.pre_filter_planes[plane] = {
+          pre_filter.data, static_cast<int32_t>(pre_filter.stride),
+          pre_filter.width, pre_filter.height};
+      frame.pre_filter_plane_count = static_cast<uint8_t>(plane + 1);
+    }
+  }
+  if (inspection->transform_block_count > state->limits.max_transform_blocks_per_frame ||
+      inspection->coefficient_count > state->limits.max_coefficients_per_frame ||
+      (inspection->transform_block_count != 0 && inspection->transform_blocks == nullptr) ||
+      (inspection->coefficient_count != 0 && inspection->coefficients == nullptr)) {
+    *error = "decoder inspection coefficients exceed the configured limit";
+    return BITSCOPE_H264_LIMIT_EXCEEDED;
+  }
+  if (inspection->coefficient_count != 0) {
+    state->coefficients.assign(
+        inspection->coefficients,
+        inspection->coefficients + inspection->coefficient_count);
+  }
+  state->transform_blocks.reserve(inspection->transform_block_count);
+  for (uint32_t index = 0; index < inspection->transform_block_count; ++index) {
+    const AVH264InspectionTransformBlock& source = inspection->transform_blocks[index];
+    if (source.coefficient_offset > state->coefficients.size() ||
+        source.coefficient_count > state->coefficients.size() - source.coefficient_offset) {
+      *error = "decoder returned malformed transform coefficient offsets";
+      return BITSCOPE_H264_DECODE_ERROR;
+    }
+    state->transform_blocks.push_back({
+        source.x, source.y, source.width, source.height, source.plane,
+        source.flags, {0, 0},
+        state->coefficients.data() + source.coefficient_offset,
+        source.coefficient_count});
+  }
+  frame.transform_blocks = state->transform_blocks.empty() ? nullptr : state->transform_blocks.data();
+  frame.transform_block_count = static_cast<uint32_t>(state->transform_blocks.size());
+#endif
 
   const AVPixFmtDescriptor* descriptor = av_pix_fmt_desc_get(static_cast<AVPixelFormat>(decoded->format));
   for (uint32_t plane = 0; plane < 4 && decoded->data[plane] != nullptr; ++plane) {
@@ -232,9 +350,17 @@ extern "C" int bitscope_h264_inspect_annexb(
   const BitscopeH264Limits resolved = ResolveLimits(limits);
   if (resolved.max_input_bytes == 0 || resolved.max_dimension == 0 ||
       resolved.max_pixels == 0 || resolved.max_frames == 0 ||
-      resolved.max_motion_vectors_per_frame == 0) {
+      resolved.max_motion_vectors_per_frame == 0 ||
+      resolved.max_transform_blocks_per_frame == 0 ||
+      resolved.max_coefficients_per_frame == 0) {
     WriteError(error_message, error_message_capacity, "H.264 inspector limits must be positive");
     return BITSCOPE_H264_INVALID_ARGUMENT;
+  }
+  if (resolved.max_transform_blocks_per_frame > kDefaultMaxTransformBlocks ||
+      resolved.max_coefficients_per_frame > kDefaultMaxCoefficients) {
+    WriteError(error_message, error_message_capacity,
+               "H.264 coefficient limits exceed the inspector hard cap");
+    return BITSCOPE_H264_LIMIT_EXCEEDED;
   }
   if (size > resolved.max_input_bytes || size > static_cast<size_t>(std::numeric_limits<int>::max())) {
     WriteError(error_message, error_message_capacity, "H.264 input exceeds the configured limit");
@@ -261,6 +387,19 @@ extern "C" int bitscope_h264_inspect_annexb(
     codec_context->export_side_data |= AV_CODEC_EXPORT_DATA_MVS;
     codec_context->flags2 |= AV_CODEC_FLAG2_EXPORT_MVS;
     codec_context->thread_count = 1;
+    codec_context->thread_type = 0;
+#if BITSCOPE_HAS_FFMPEG_INSPECTION
+    if (av_opt_set_int(codec_context->priv_data, "bitscope_inspection",
+                       kNativeInspectionStages, 0) < 0 ||
+        av_opt_set_int(codec_context->priv_data, "bitscope_max_transform_blocks",
+                       resolved.max_transform_blocks_per_frame, 0) < 0 ||
+        av_opt_set_int(codec_context->priv_data, "bitscope_max_coefficients",
+                       resolved.max_coefficients_per_frame, 0) < 0) {
+      WriteError(error_message, error_message_capacity,
+                 "bundled FFmpeg decoder does not support H.264 inspection hooks");
+      return BITSCOPE_H264_DECODER_UNAVAILABLE;
+    }
+#endif
     const int open_result = avcodec_open2(codec_context.get(), codec, nullptr);
     if (open_result < 0) {
       WriteError(error_message, error_message_capacity, "unable to open FFmpeg H.264 decoder: " + AvError(open_result));
@@ -269,7 +408,7 @@ extern "C" int bitscope_h264_inspect_annexb(
 
     std::vector<uint8_t> padded(size + AV_INPUT_BUFFER_PADDING_SIZE, 0);
     std::copy_n(data, size, padded.data());
-    DecodeState state{resolved, observer, 0, {}};
+    DecodeState state{resolved, observer, 0, {}, {}, {}};
     state.motion_vectors.reserve(std::min(static_cast<uint32_t>(4096), resolved.max_motion_vectors_per_frame));
     size_t offset = 0;
     std::string error;

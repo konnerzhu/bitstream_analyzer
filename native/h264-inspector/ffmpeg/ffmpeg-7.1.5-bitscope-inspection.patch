@@ -1,0 +1,169 @@
+--- a/libavutil/frame.h
++++ b/libavutil/frame.h
+@@ -243,6 +243,9 @@
+      * The data is an int storing the view ID.
+      */
+     AV_FRAME_DATA_VIEW_ID,
++
++    /** BitScope H.264 decoder-stage inspection data. */
++    AV_FRAME_DATA_BITSCOPE_H264_INSPECTION,
+ };
+ 
+ enum AVActiveFormatDescription {
+--- a/libavcodec/Makefile
++++ b/libavcodec/Makefile
+@@ -7,6 +7,7 @@
+           avdct.h                                                       \
+           avfft.h                                                       \
+           bsf.h                                                         \
++          bitscope_h264_inspection.h                                    \
+           codec.h                                                       \
+           codec_desc.h                                                  \
+           codec_id.h                                                    \
+@@ -412,2 +413,3 @@
+ OBJS-$(CONFIG_H264_DECODER)            += h264dec.o h264_cabac.o h264_cavlc.o \
++                                          bitscope_h264_inspection.o \
+                                           h264_direct.o h264_loopfilter.o  \
+@@ -414,3 +416,4 @@
+                                           h264_mb.o h264_picture.o \
+                                           h264_refs.o \
++                                          mpegutils.o \
+                                           h264_slice.o h264data.o h274.o
+--- a/libavcodec/h264dec.h
++++ b/libavcodec/h264dec.h
+@@ -358,6 +358,10 @@
+     H2645Packet pkt;
+ 
+     int pixel_shift;    ///< 0 for 8-bit H.264, 1 for high-bit-depth H.264
++
++    uint32_t bitscope_inspection_stages;
++    uint32_t bitscope_max_transform_blocks;
++    uint32_t bitscope_max_coefficients;
+ 
+     /* coded dimensions -- 16 * mb w/h */
+     int width, height;
+--- a/libavcodec/h264dec.c
++++ b/libavcodec/h264dec.c
+@@ -976,13 +976,11 @@
+ 
+         *got_frame = 1;
+ 
+-        if (CONFIG_MPEGVIDEODEC) {
+-            ff_print_debug_info2(h->avctx, dst,
+-                                 out->mb_type,
+-                                 out->qscale_table,
+-                                 out->motion_val,
+-                                 out->mb_width, out->mb_height, out->mb_stride, 1);
+-        }
++        ff_print_debug_info2(h->avctx, dst,
++                             out->mb_type,
++                             out->qscale_table,
++                             out->motion_val,
++                             out->mb_width, out->mb_height, out->mb_stride, 1);
+     }
+ 
+     return 0;
+@@ -1105,6 +1103,9 @@
+ #define VD AV_OPT_FLAG_VIDEO_PARAM | AV_OPT_FLAG_DECODING_PARAM
+ #define VDX VD | AV_OPT_FLAG_EXPORT
+ static const AVOption h264_options[] = {
++    { "bitscope_inspection", "Export BitScope H.264 decoder stages", OFFSET(bitscope_inspection_stages), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, INT_MAX, VD },
++    { "bitscope_max_transform_blocks", "Maximum exported transform blocks", OFFSET(bitscope_max_transform_blocks), AV_OPT_TYPE_INT, { .i64 = 1000000 }, 1, INT_MAX, VD },
++    { "bitscope_max_coefficients", "Maximum exported transform coefficients", OFFSET(bitscope_max_coefficients), AV_OPT_TYPE_INT, { .i64 = 16000000 }, 1, INT_MAX, VD },
+     { "is_avc", "is avc", OFFSET(is_avc), AV_OPT_TYPE_BOOL, {.i64 = 0}, 0, 1, VDX },
+     { "nal_length_size", "nal_length_size", OFFSET(nal_length_size), AV_OPT_TYPE_INT, {.i64 = 0}, 0, 4, VDX },
+     { "enable_er", "Enable error resilience on damaged frames (unsafe)", OFFSET(enable_er), AV_OPT_TYPE_BOOL, { .i64 = -1 }, -1, 1, VD },
+--- a/libavcodec/h264_mb.c
++++ b/libavcodec/h264_mb.c
+@@ -31,6 +31,7 @@
+ #include "libavutil/common.h"
+ #include "libavutil/intreadwrite.h"
+ #include "avcodec.h"
++#include "bitscope_h264_inspection_internal.h"
+ #include "h264dec.h"
+ #include "h264_ps.h"
+ #include "qpeldsp.h"
+@@ -638,6 +639,7 @@
+                 uint8_t *const ptr = dest_y + block_offset[i];
+                 const int dir      = sl->intra4x4_pred_mode_cache[scan8[i]];
+                 if (transform_bypass && h->ps.sps->profile_idc == 244 && dir <= 1) {
++                    ff_bitscope_h264_mark_prediction_incomplete(h);
+                     if (h->x264_build < 151U) {
+                         h->hpc.pred8x8l_add[dir](ptr, sl->mb + (i * 16 + p * 256 << pixel_shift), linesize);
+                     } else
+@@ -648,6 +650,7 @@
+                     const int nnz = sl->non_zero_count_cache[scan8[i + p * 16]];
+                     h->hpc.pred8x8l[dir](ptr, (sl->topleft_samples_available << i) & 0x8000,
+                                          (sl->topright_samples_available << i) & 0x4000, linesize);
++                    ff_bitscope_h264_record_prediction(h, sl, p, ptr, linesize, 8, 8);
+                     if (nnz) {
+                         if (nnz == 1 && dctcoef_get(sl->mb, pixel_shift, i * 16 + p * 256))
+                             idct_dc_add(ptr, sl->mb + (i * 16 + p * 256 << pixel_shift), linesize);
+@@ -669,6 +672,7 @@
+                 const int dir      = sl->intra4x4_pred_mode_cache[scan8[i]];
+ 
+                 if (transform_bypass && h->ps.sps->profile_idc == 244 && dir <= 1) {
++                    ff_bitscope_h264_mark_prediction_incomplete(h);
+                     h->hpc.pred4x4_add[dir](ptr, sl->mb + (i * 16 + p * 256 << pixel_shift), linesize);
+                 } else {
+                     uint8_t *topright;
+@@ -691,6 +695,7 @@
+                         topright = NULL;
+ 
+                     h->hpc.pred4x4[dir](ptr, topright, linesize);
++                    ff_bitscope_h264_record_prediction(h, sl, p, ptr, linesize, 4, 4);
+                     nnz = sl->non_zero_count_cache[scan8[i + p * 16]];
+                     if (nnz) {
+                         if (nnz == 1 && dctcoef_get(sl->mb, pixel_shift, i * 16 + p * 256))
+@@ -703,6 +708,7 @@
+         }
+     } else {
+         h->hpc.pred16x16[sl->intra16x16_pred_mode](dest_y, linesize);
++        ff_bitscope_h264_record_prediction(h, sl, p, dest_y, linesize, 16, 16);
+         if (sl->non_zero_count_cache[scan8[LUMA_DC_BLOCK_INDEX + p]]) {
+             if (!transform_bypass)
+                 h->h264dsp.h264_luma_dc_dequant_idct(sl->mb + (p * 256 << pixel_shift),
+@@ -804,6 +810,7 @@
+     int is_complex    = CONFIG_SMALL || sl->is_complex ||
+                         IS_INTRA_PCM(mb_type) || sl->qscale == 0;
+ 
++    ff_bitscope_h264_record_coefficients(h, sl);
+     if (CHROMA444(h)) {
+         if (is_complex || h->pixel_shift)
+             hl_decode_mb_444_complex(h, sl);
+@@ -815,4 +822,5 @@
+         hl_decode_mb_simple_16(h, sl);
+     } else
+         hl_decode_mb_simple_8(h, sl);
++    ff_bitscope_h264_record_reconstruction(h, sl);
+ }
+--- a/libavcodec/h264_mb_template.c
++++ b/libavcodec/h264_mb_template.c
+@@ -158,6 +158,8 @@
+             if (SIMPLE || !CONFIG_GRAY || !(h->flags & AV_CODEC_FLAG_GRAY)) {
+                 h->hpc.pred8x8[sl->chroma_pred_mode](dest_cb, uvlinesize);
+                 h->hpc.pred8x8[sl->chroma_pred_mode](dest_cr, uvlinesize);
++                ff_bitscope_h264_record_prediction(h, sl, 1, dest_cb, uvlinesize, 8, block_h);
++                ff_bitscope_h264_record_prediction(h, sl, 2, dest_cr, uvlinesize, 8, block_h);
+             }
+ 
+             hl_decode_mb_predict_luma(h, sl, mb_type, SIMPLE,
+@@ -185,6 +187,9 @@
+                               h->h264dsp.weight_h264_pixels_tab,
+                               h->h264dsp.biweight_h264_pixels_tab);
+             }
++            ff_bitscope_h264_record_prediction(h, sl, 0, dest_y, linesize, 16, 16);
++            ff_bitscope_h264_record_prediction(h, sl, 1, dest_cb, uvlinesize, 8, block_h);
++            ff_bitscope_h264_record_prediction(h, sl, 2, dest_cr, uvlinesize, 8, block_h);
+         }
+ 
+         hl_decode_mb_idct_luma(h, sl, mb_type, SIMPLE, transform_bypass,
+@@ -343,6 +348,8 @@
+                       h->h264chroma.avg_h264_chroma_pixels_tab,
+                       h->h264dsp.weight_h264_pixels_tab,
+                       h->h264dsp.biweight_h264_pixels_tab);
++            for (p = 0; p < plane_count; p++)
++                ff_bitscope_h264_record_prediction(h, sl, p, dest[p], linesize, 16, 16);
+         }
+ 
+         for (p = 0; p < plane_count; p++)

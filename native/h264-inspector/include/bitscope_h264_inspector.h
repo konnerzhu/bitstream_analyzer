@@ -8,7 +8,7 @@
 extern "C" {
 #endif
 
-#define BITSCOPE_H264_INSPECTOR_ABI_VERSION 2u
+#define BITSCOPE_H264_INSPECTOR_ABI_VERSION 3u
 
 enum BitscopeH264PixelLayout {
   BITSCOPE_H264_PIXEL_I400 = 0,
@@ -25,6 +25,10 @@ enum BitscopeH264InspectionStage {
   BITSCOPE_H264_STAGE_RESIDUAL_PIXELS = 1u << 3,
   BITSCOPE_H264_STAGE_TRANSFORM_COEFFICIENTS = 1u << 4,
   BITSCOPE_H264_STAGE_PRE_FILTER_PIXELS = 1u << 5
+};
+
+enum BitscopeH264TransformBlockFlags {
+  BITSCOPE_H264_TRANSFORM_BLOCK_DC = 1u << 0
 };
 
 enum BitscopeH264Result {
@@ -45,6 +49,8 @@ typedef struct BitscopeH264Limits {
   uint64_t max_pixels;
   uint32_t max_frames;
   uint32_t max_motion_vectors_per_frame;
+  uint32_t max_transform_blocks_per_frame;
+  uint32_t max_coefficients_per_frame;
 } BitscopeH264Limits;
 
 typedef struct BitscopeH264Plane {
@@ -67,7 +73,8 @@ typedef struct BitscopeH264TransformBlock {
   uint16_t width;
   uint16_t height;
   uint8_t plane;
-  uint8_t reserved[3];
+  uint8_t flags;
+  uint8_t reserved[2];
   const int32_t* coefficients;
   uint32_t coefficient_count;
 } BitscopeH264TransformBlock;
@@ -101,6 +108,7 @@ typedef struct BitscopeH264Frame {
   uint8_t pre_filter_plane_count;
   uint8_t reserved[3];
   uint32_t available_stages;
+  uint32_t incomplete_stages;
   BitscopeH264Plane final_planes[4];
   BitscopeH264Plane predicted_planes[4];
   BitscopeH264ResidualPlane residual_planes[4];
@@ -124,7 +132,7 @@ typedef struct BitscopeH264Observer {
   void* user_data;
 } BitscopeH264Observer;
 
-/* All returned data pointers are valid only during on_frame. */
+/* All returned data pointers, including coefficient arrays, are valid only during on_frame. */
 int bitscope_h264_inspect_annexb(
     const uint8_t* data,
     size_t size,

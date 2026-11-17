@@ -16,6 +16,9 @@ ffmpeg_checksum="de668509caf9e35e3cd162473441fdb29538c6d96ed080292b3cf9e6fc5d558
 native_output="$project_root/.artifacts/desktop/native"
 license_output="$project_root/.artifacts/desktop/native-licenses"
 h264_build="$work_root/h264-build"
+inspection_dir="$project_root/native/h264-inspector/ffmpeg"
+inspection_patch="$inspection_dir/ffmpeg-7.1.5-bitscope-inspection.patch"
+inspection_stamp="$ffmpeg_source/.bitscope-inspection-v2"
 
 mkdir -p "$work_root" "$native_output" "$license_output"
 
@@ -33,7 +36,9 @@ fi
 
 ffmpeg_pc="$ffmpeg_prefix/lib/pkgconfig/libavcodec.pc"
 if [ -f "$ffmpeg_source/config.h" ] || [ -d "$ffmpeg_prefix" ]; then
-  if [ ! -f "$ffmpeg_prefix/include/libavcodec/avcodec.h" ] || \
+  if [ ! -f "$inspection_stamp" ] || \
+     [ ! -f "$ffmpeg_prefix/include/libavcodec/avcodec.h" ] || \
+     [ ! -f "$ffmpeg_prefix/include/libavcodec/bitscope_h264_inspection.h" ] || \
      [ ! -f "$ffmpeg_prefix/lib/libavcodec.a" ] || \
      [ ! -f "$ffmpeg_pc" ] || \
      ! grep -Fqx "prefix=$ffmpeg_prefix" "$ffmpeg_pc"; then
@@ -42,9 +47,19 @@ if [ -f "$ffmpeg_source/config.h" ] || [ -d "$ffmpeg_prefix" ]; then
   fi
 fi
 
-if [ ! -f "$ffmpeg_source/config.h" ]; then
-  rm -rf "$ffmpeg_source" "$ffmpeg_prefix"
+if [ ! -d "$ffmpeg_source" ]; then
   tar -xf "$ffmpeg_archive" -C "$work_root"
+fi
+
+if [ ! -f "$inspection_stamp" ]; then
+  cp "$inspection_dir/bitscope_h264_inspection.h" "$ffmpeg_source/libavcodec/"
+  cp "$inspection_dir/bitscope_h264_inspection_internal.h" "$ffmpeg_source/libavcodec/"
+  cp "$inspection_dir/bitscope_h264_inspection.c" "$ffmpeg_source/libavcodec/"
+  (cd "$ffmpeg_source" && patch -p1 < "$inspection_patch")
+  touch "$inspection_stamp"
+fi
+
+if [ ! -f "$ffmpeg_source/config.h" ]; then
   cd "$ffmpeg_source"
   ./configure \
     --prefix="$ffmpeg_prefix" \

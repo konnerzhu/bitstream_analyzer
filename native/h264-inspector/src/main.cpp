@@ -109,6 +109,10 @@ int PrintFrame(const BitscopeH264Frame* frame, void* user_data) {
   auto* summary = static_cast<Summary*>(user_data);
   summary->frames += 1;
   summary->motion_vectors += frame->motion_vector_count;
+  uint64_t coefficient_count = 0;
+  for (uint32_t index = 0; index < frame->transform_block_count; ++index) {
+    coefficient_count += frame->transform_blocks[index].coefficient_count;
+  }
   if (!summary->arguments.export_frame) {
     std::cout << "{\"type\":\"frame\",\"index\":" << frame->decode_index
               << ",\"width\":" << frame->width << ",\"height\":" << frame->height
@@ -117,7 +121,13 @@ int PrintFrame(const BitscopeH264Frame* frame, void* user_data) {
               << ",\"pixelFormat\":" << frame->pixel_format
               << ",\"bitDepth\":" << static_cast<uint32_t>(frame->bit_depth)
               << ",\"planes\":" << static_cast<uint32_t>(frame->final_plane_count)
+              << ",\"predictedPlanes\":" << static_cast<uint32_t>(frame->predicted_plane_count)
+              << ",\"residualPlanes\":" << static_cast<uint32_t>(frame->residual_plane_count)
+              << ",\"preFilterPlanes\":" << static_cast<uint32_t>(frame->pre_filter_plane_count)
               << ",\"motionVectors\":" << frame->motion_vector_count
+              << ",\"transformBlocks\":" << frame->transform_block_count
+              << ",\"coefficients\":" << coefficient_count
+              << ",\"incompleteStages\":" << frame->incomplete_stages
               << ",\"availableStages\":" << frame->available_stages << "}\n";
     if (!std::cout.good()) return 1;
   }
@@ -174,7 +184,7 @@ int main(int argc, char** argv) {
   summary.arguments = arguments;
   BitscopeH264Limits limits{
       sizeof(BitscopeH264Limits), kCliMaxInputBytes, 8192u,
-      8192ull * 4320ull, 10000u, 1000000u};
+      8192ull * 4320ull, 10000u, 1000000u, 1000000u, 16000000u};
   BitscopeH264Observer observer{sizeof(BitscopeH264Observer), PrintFrame, &summary};
   char error[512]{};
   const int result = bitscope_h264_inspect_annexb(
