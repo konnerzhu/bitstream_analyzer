@@ -13,6 +13,28 @@ const H264_FIXTURE = Buffer.from(
   "hex",
 );
 
+const AV1_FRAME_OBU = Buffer.from([0x32, 0x01, 0x00]);
+
+function makeIvf(samples, declaredFrameCount = samples.length) {
+  const header = Buffer.alloc(32);
+  header.write("DKIF", 0, "ascii");
+  header.writeUInt16LE(32, 6);
+  header.write("AV01", 8, "ascii");
+  header.writeUInt16LE(16, 12);
+  header.writeUInt16LE(16, 14);
+  header.writeUInt32LE(30, 16);
+  header.writeUInt32LE(1, 20);
+  header.writeUInt32LE(declaredFrameCount, 24);
+  const records = samples.map((sample, index) => {
+    const record = Buffer.alloc(12 + sample.length);
+    record.writeUInt32LE(sample.length, 0);
+    record.writeBigUInt64LE(BigInt(index), 4);
+    sample.copy(record, 12);
+    return record;
+  });
+  return Buffer.concat([header, ...records]);
+}
+
 async function loadSyntaxAnalyzer() {
   const output = await mkdtemp(join(tmpdir(), "bitscope-syntax-tree-test-"));
   execFileSync(resolve("node_modules/.bin/tsc"), [
@@ -44,14 +66,12 @@ test("builds and searches a source-linked H.264 syntax tree", async () => {
     assert.ok(ppsMatches.some(node => node.unitIndex === 2));
     assert.ok(offsetMatches.some(node => node.unitIndex === 2));
     assert.ok(typeMatches.every(node => node.source?.byteOffset >= 0));
-    assert.equal(report.diagnostics.filter(item => item.severity === "error").length, 0);
-    assert.ok(report.diagnostics.some(item => item.ruleId === "H264-BASIC-COMPLIANCE"));
   } finally {
     await loaded.dispose();
   }
 });
 
-test("reports forbidden bits and missing parameter sets without hiding the tree", async () => {
+test("keeps malformed header fields searchable without hiding the tree", async () => {
   const loaded = await loadSyntaxAnalyzer();
   try {
     const bytes = new Uint8Array(H264_FIXTURE);
@@ -59,12 +79,9 @@ test("reports forbidden bits and missing parameter sets without hiding the tree"
     const analysis = loaded.codecs.analyzeBitstream(bytes, "damaged.h264");
     analysis.units.splice(1, 1);
     const report = loaded.syntax.buildSyntaxReport(analysis, bytes);
-    const forbidden = report.diagnostics.find(item => item.ruleId === "H264-FORBIDDEN-ZERO-BIT");
 
-    assert.equal(forbidden?.severity, "error");
-    assert.equal(forbidden?.source?.byteOffset, 4);
-    assert.ok(report.diagnostics.some(item => item.ruleId === "H264-MISSING-PPS"));
     assert.ok(loaded.syntax.searchSyntaxTree(report, "forbidden_zero_bit 1").length > 0);
+    assert.ok(loaded.syntax.searchSyntaxTree(report, "nal_unit_type 5").length > 0);
   } finally {
     await loaded.dispose();
   }
@@ -80,6 +97,30 @@ test("bounds syntax queries and returns a fixed maximum number of matches", asyn
     const results = loaded.syntax.searchSyntaxTree(report, oversizedQuery);
 
     assert.ok(results.length <= loaded.syntax.MAX_SYNTAX_SEARCH_RESULTS);
+  } finally {
+    await loaded.dispose();
+  }
+});
+
+test("keeps IVF declared and actual record counts as metadata, not conformance errors", async () => {
+  const loaded = await loadSyntaxAnalyzer();
+  try {
+    const multiFrameSample = Buffer.concat([AV1_FRAME_OBU, AV1_FRAME_OBU]);
+    const validBytes = new Uint8Array(makeIvf([multiFrameSample], 1));
+    const validAnalysis = loaded.codecs.analyzeBitstream(validBytes, "layers.ivf");
+    const validReport = loaded.syntax.buildSyntaxReport(validAnalysis, validBytes);
+
+    assert.equal(validAnalysis.containerFrameCount, 1);
+    assert.equal(validAnalysis.frameCount, 2);
+    assert.ok(loaded.syntax.searchSyntaxTree(validReport, "frame_record_count 1").length > 0);
+
+    const mismatchedBytes = new Uint8Array(makeIvf([AV1_FRAME_OBU, AV1_FRAME_OBU], 3));
+    const mismatchedAnalysis = loaded.codecs.analyzeBitstream(mismatchedBytes, "stale-header.ivf");
+    const mismatchedReport = loaded.syntax.buildSyntaxReport(mismatchedAnalysis, mismatchedBytes);
+
+    assert.equal(mismatchedAnalysis.containerFrameCount, 2);
+    assert.ok(loaded.syntax.searchSyntaxTree(mismatchedReport, "declared_frame_count 3").length > 0);
+    assert.ok(loaded.syntax.searchSyntaxTree(mismatchedReport, "frame_record_count 2").length > 0);
   } finally {
     await loaded.dispose();
   }

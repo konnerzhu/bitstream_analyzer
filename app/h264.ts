@@ -19,7 +19,7 @@ export type Analysis = {
   idrCount: number; totalBytes: number; counts: Map<number, number>;
   codecKind: CodecKind; codecName: string; unitName: "NAL" | "OBU"; blockName: string;
   blockSize: number; parameterSetTypes: number[]; parameterSetName: string;
-  containerName?: string; declaredFrameCount?: number;
+  containerName?: string; declaredFrameCount?: number; containerFrameCount?: number;
 };
 
 const NAL_NAMES = new Map<number, string>([

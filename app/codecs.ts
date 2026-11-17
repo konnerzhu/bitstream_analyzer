@@ -396,6 +396,7 @@ type Av1ContainerInfo = {
   height: number;
   fps?: number;
   declaredFrameCount?: number;
+  frameRecordCount?: number;
 };
 
 function analyzeAv1Segments(bytes: Uint8Array, segments: Av1Segment[], container?: Av1ContainerInfo): Analysis {
@@ -479,7 +480,9 @@ function analyzeAv1Segments(bytes: Uint8Array, segments: Av1Segment[], container
     frameCount, idrCount, totalBytes: bytes.length, counts,
     codecKind: "av1", codecName: "AV1", unitName: "OBU", blockName: "Superblock",
     blockSize: sequence?.info.blockSize ?? 64, parameterSetTypes: [1], parameterSetName: "Sequence Header",
-    containerName: container?.name, declaredFrameCount: container?.declaredFrameCount,
+    containerName: container?.name,
+    declaredFrameCount: container?.declaredFrameCount,
+    containerFrameCount: container?.frameRecordCount,
   };
 }
 
@@ -525,7 +528,9 @@ function analyzeIvf(bytes: Uint8Array): Analysis {
     if (segments.length > 100_000) throw new Error("IVF 帧超过 100,000 个，为避免浏览器失去响应已停止解析");
   }
   if (!segments.length) throw new Error("IVF 文件中没有视频帧");
-  return analyzeAv1Segments(bytes, segments, { name: "IVF", width, height, fps, declaredFrameCount });
+  return analyzeAv1Segments(bytes, segments, {
+    name: "IVF", width, height, fps, declaredFrameCount, frameRecordCount: segments.length,
+  });
 }
 
 function extensionOf(fileName: string) {

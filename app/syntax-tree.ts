@@ -3,7 +3,6 @@ import type { Analysis, CodecKind, NalUnit } from "./h264";
 export const MAX_SYNTAX_NODES = 250_000;
 export const MAX_SYNTAX_SEARCH_RESULTS = 500;
 export const MAX_SYNTAX_QUERY_LENGTH = 256;
-export const MAX_COMPLIANCE_DIAGNOSTICS = 10_000;
 
 export type SyntaxValue = string | number | boolean;
 export type SyntaxNodeKind = "stream" | "group" | "unit" | "field" | "payload";
@@ -27,19 +26,6 @@ export type SyntaxNode = {
   children: SyntaxNode[];
 };
 
-export type ComplianceSeverity = "error" | "warning" | "info";
-
-export type ComplianceDiagnostic = {
-  id: string;
-  ruleId: string;
-  severity: ComplianceSeverity;
-  message: string;
-  messageZh: string;
-  nodeId?: string;
-  unitIndex?: number;
-  source?: SyntaxSourceRange;
-};
-
 export type SyntaxSearchEntry = {
   node: SyntaxNode;
   searchText: string;
@@ -47,7 +33,6 @@ export type SyntaxSearchEntry = {
 
 export type SyntaxReport = {
   root: SyntaxNode;
-  diagnostics: ComplianceDiagnostic[];
   searchIndex: SyntaxSearchEntry[];
   nodeCount: number;
   truncated: boolean;
@@ -166,6 +151,7 @@ function addSummary(builder: NodeBuilder, root: SyntaxNode, analysis: Analysis) 
   field(builder, summary, "key_frame_count", analysis.idrCount);
   if (analysis.containerName) field(builder, summary, "container", analysis.containerName);
   if (analysis.declaredFrameCount !== undefined) field(builder, summary, "declared_frame_count", analysis.declaredFrameCount);
+  if (analysis.containerFrameCount !== undefined) field(builder, summary, "frame_record_count", analysis.containerFrameCount);
 
   if (analysis.sps) {
     const parameters = addNode(builder, root, "stream.sequence_parameters", "sequence_parameters", "group");
@@ -238,137 +224,6 @@ function addUnit(builder: NodeBuilder, units: SyntaxNode, analysis: Analysis, un
   });
 }
 
-function nodeForUnitField(reportRoot: SyntaxNode, unitIndex: number, fieldName: string) {
-  return `syntax:${reportRoot.path}.units[${unitIndex}].header.${fieldName}`;
-}
-
-function diagnostic(
-  diagnostics: ComplianceDiagnostic[],
-  ruleId: string,
-  severity: ComplianceSeverity,
-  message: string,
-  messageZh: string,
-  options: Pick<ComplianceDiagnostic, "nodeId" | "unitIndex" | "source"> = {},
-) {
-  if (diagnostics.length >= MAX_COMPLIANCE_DIAGNOSTICS) return;
-  diagnostics.push({ id: `diagnostic:${diagnostics.length}`, ruleId, severity, message, messageZh, ...options });
-}
-
-function parameterSetRules(codec: CodecKind) {
-  if (codec === "h264") return [{ type: 7, name: "SPS" }, { type: 8, name: "PPS" }];
-  if (codec === "h265") return [{ type: 32, name: "VPS" }, { type: 33, name: "SPS" }, { type: 34, name: "PPS" }];
-  if (codec === "h266") return [{ type: 14, name: "VPS" }, { type: 15, name: "SPS" }, { type: 16, name: "PPS" }];
-  return [{ type: 1, name: "Sequence Header" }];
-}
-
-function buildDiagnostics(analysis: Analysis, bytes: Uint8Array, root: SyntaxNode, truncated: boolean) {
-  const diagnostics: ComplianceDiagnostic[] = [];
-  const required = parameterSetRules(analysis.codecKind);
-  for (const parameter of required) {
-    if (!analysis.units.some(unit => unit.type === parameter.type)) {
-      diagnostic(diagnostics, `${analysis.codecKind.toUpperCase()}-MISSING-${parameter.name.replaceAll(" ", "-").toUpperCase()}`, "error",
-        `Required ${parameter.name} syntax is missing.`, `缺少必需的 ${parameter.name} 语法。`);
-    }
-  }
-  if (!analysis.units.some(unit => unit.frameStart)) {
-    diagnostic(diagnostics, `${analysis.codecKind.toUpperCase()}-NO-FRAME`, "warning",
-      "No complete frame start was identified.", "未识别到完整的帧起始位置。");
-  }
-  if (analysis.sps && (analysis.sps.width <= 0 || analysis.sps.height <= 0)) {
-    diagnostic(diagnostics, `${analysis.codecKind.toUpperCase()}-INVALID-DIMENSIONS`, "error",
-      "The coded dimensions must both be positive.", "编码宽度和高度必须均为正数。");
-  }
-  if (analysis.declaredFrameCount !== undefined && analysis.declaredFrameCount !== analysis.frameCount) {
-    diagnostic(diagnostics, "IVF-FRAME-COUNT-MISMATCH", "warning",
-      `IVF declares ${analysis.declaredFrameCount} frames but ${analysis.frameCount} frame OBUs were found.`,
-      `IVF 声明 ${analysis.declaredFrameCount} 帧，但实际找到 ${analysis.frameCount} 个帧 OBU。`, {
-        nodeId: "syntax:stream.ivf_header.declared_frame_count",
-        source: bytes.length >= 28 ? source(24, 4) : undefined,
-      });
-  }
-
-  let previousEnd = 0;
-  for (const unit of analysis.units) {
-    const fields = unit.fields ?? {};
-    const unitSource = source(unit.offset, unit.size);
-    if (unit.offset < previousEnd || unit.offset < 0 || unit.size <= 0 || unit.offset + unit.size > bytes.length) {
-      diagnostic(diagnostics, "STREAM-UNIT-RANGE", "error",
-        `${analysis.unitName} #${unit.index} has an invalid or overlapping byte range.`,
-        `${analysis.unitName} #${unit.index} 的字节范围无效或与前一单元重叠。`, { unitIndex: unit.index, source: unitSource });
-    }
-    previousEnd = Math.max(previousEnd, unit.offset + unit.size);
-
-    const forbiddenName = analysis.codecKind === "av1" ? "obu_forbidden_bit" : "forbidden_zero_bit";
-    if (fields[forbiddenName] !== undefined && Number(fields[forbiddenName]) !== 0) {
-      diagnostic(diagnostics, `${analysis.codecKind.toUpperCase()}-FORBIDDEN-ZERO-BIT`, "error",
-        `${forbiddenName} must be zero.`, `${forbiddenName} 必须为零。`, {
-          nodeId: nodeForUnitField(root, unit.index, forbiddenName), unitIndex: unit.index,
-          source: headerFieldRange(analysis.codecKind, unit, forbiddenName),
-        });
-    }
-    if (analysis.codecKind === "h266" && Number(fields.nuh_reserved_zero_bit ?? 0) !== 0) {
-      diagnostic(diagnostics, "VVC-RESERVED-ZERO-BIT", "error",
-        "nuh_reserved_zero_bit must be zero.", "nuh_reserved_zero_bit 必须为零。", {
-          nodeId: nodeForUnitField(root, unit.index, "nuh_reserved_zero_bit"), unitIndex: unit.index,
-          source: headerFieldRange("h266", unit, "nuh_reserved_zero_bit"),
-        });
-    }
-    if ((analysis.codecKind === "h265" || analysis.codecKind === "h266") && Number(fields.nuh_temporal_id_plus1 ?? 1) === 0) {
-      diagnostic(diagnostics, `${analysis.codecKind.toUpperCase()}-TEMPORAL-ID-ZERO`, "error",
-        "nuh_temporal_id_plus1 must not be zero.", "nuh_temporal_id_plus1 不得为零。", {
-          nodeId: nodeForUnitField(root, unit.index, "nuh_temporal_id_plus1"), unitIndex: unit.index,
-          source: headerFieldRange(analysis.codecKind, unit, "nuh_temporal_id_plus1"),
-        });
-    }
-    if (analysis.codecKind === "av1") {
-      for (const reservedName of ["obu_reserved_1bit", "extension_header_reserved_3bits"]) {
-        if (Number(fields[reservedName] ?? 0) !== 0) {
-          diagnostic(diagnostics, `AV1-${reservedName.toUpperCase()}`, "error",
-            `${reservedName} must be zero.`, `${reservedName} 必须为零。`, {
-              nodeId: nodeForUnitField(root, unit.index, reservedName), unitIndex: unit.index,
-              source: headerFieldRange("av1", unit, reservedName),
-            });
-        }
-      }
-    }
-    if (analysis.codecKind === "h264") {
-      const refIdc = Number(fields.nal_ref_idc ?? unit.refIdc);
-      if ([6, 9, 10, 11, 12].includes(unit.type) && refIdc !== 0) {
-        diagnostic(diagnostics, "H264-NON-VCL-NAL-REF-IDC", "warning",
-          `nal_ref_idc should be zero for NAL unit type ${unit.type}.`,
-          `NAL 单元类型 ${unit.type} 的 nal_ref_idc 应为零。`, {
-            nodeId: nodeForUnitField(root, unit.index, "nal_ref_idc"), unitIndex: unit.index,
-            source: headerFieldRange("h264", unit, "nal_ref_idc"),
-          });
-      }
-      if (unit.type === 5 && refIdc === 0) {
-        diagnostic(diagnostics, "H264-IDR-NAL-REF-IDC", "error",
-          "An IDR slice must have a non-zero nal_ref_idc.", "IDR 切片的 nal_ref_idc 必须非零。", {
-            nodeId: nodeForUnitField(root, unit.index, "nal_ref_idc"), unitIndex: unit.index,
-            source: headerFieldRange("h264", unit, "nal_ref_idc"),
-          });
-      }
-    }
-    const reserved = /reserved|保留/i.test(unit.typeName);
-    if (reserved) {
-      diagnostic(diagnostics, `${analysis.codecKind.toUpperCase()}-RESERVED-UNIT-TYPE`, "warning",
-        `${analysis.unitName} #${unit.index} uses reserved type ${unit.type}.`,
-        `${analysis.unitName} #${unit.index} 使用了保留类型 ${unit.type}。`, { unitIndex: unit.index, source: unitSource });
-    }
-  }
-  if (truncated) {
-    diagnostic(diagnostics, "ANALYZER-SYNTAX-NODE-LIMIT", "warning",
-      `The syntax tree reached its ${MAX_SYNTAX_NODES.toLocaleString("en-US")} node safety limit; search results are incomplete.`,
-      `语法树达到 ${MAX_SYNTAX_NODES.toLocaleString("zh-CN")} 个节点的安全上限，搜索结果不完整。`);
-  }
-  if (!diagnostics.some(item => item.severity === "error" || item.severity === "warning")) {
-    diagnostic(diagnostics, `${analysis.codecKind.toUpperCase()}-BASIC-COMPLIANCE`, "info",
-      "No violations were found by the implemented structural and header checks.",
-      "当前已实现的结构与头部检查未发现违规项。");
-  }
-  return diagnostics;
-}
-
 export function buildSyntaxReport(analysis: Analysis, bytes: Uint8Array): SyntaxReport {
   const builder: NodeBuilder = { count: 0, truncated: false, index: [] };
   const root = addNode(builder, null, "stream", "bitstream", "stream", {
@@ -387,7 +242,6 @@ export function buildSyntaxReport(analysis: Analysis, bytes: Uint8Array): Syntax
   }
   return {
     root,
-    diagnostics: buildDiagnostics(analysis, bytes, root, builder.truncated),
     searchIndex: builder.index,
     nodeCount: builder.count,
     truncated: builder.truncated,
