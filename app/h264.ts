@@ -214,7 +214,7 @@ export function analyzeH264(bytes: Uint8Array): Analysis {
     while (end > nalOffset && bytes[end - 1] === 0) end--;
     if (nalOffset >= end) continue;
     const header = bytes[nalOffset];
-    if (header & 0x80) throw new Error(`NAL #${i} 的 forbidden_zero_bit 非零`);
+    const forbiddenZeroBit = (header >> 7) & 1;
     const type = header & 0x1f;
     const refIdc = (header >> 5) & 3;
     const payload = bytes.subarray(nalOffset + 1, end);
@@ -229,7 +229,16 @@ export function analyzeH264(bytes: Uint8Array): Analysis {
       index: units.length, offset: start.offset, size: end - start.offset,
       startCodeSize: start.size, type, typeName: NAL_NAMES.get(type) ?? `保留类型 ${type}`,
       refIdc, headerSize: 1, keyFrame: type === 5, frameStart: type >= 1 && type <= 5 && slice.firstMb === 0,
-      ...slice, hex: hexPreview(bytes.subarray(start.offset, end)),
+      ...slice,
+      fields: {
+        forbidden_zero_bit: forbiddenZeroBit,
+        nal_ref_idc: refIdc,
+        nal_unit_type: type,
+        ...(slice.firstMb !== undefined ? { first_mb_in_slice: slice.firstMb } : {}),
+        ...(slice.sliceType !== undefined ? { slice_type: slice.sliceType } : {}),
+        ...(slice.ppsId !== undefined ? { pic_parameter_set_id: slice.ppsId } : {}),
+      },
+      hex: hexPreview(bytes.subarray(start.offset, end)),
     });
   }
   const duration = sps?.fps ? frameCount / sps.fps : undefined;

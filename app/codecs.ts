@@ -154,13 +154,12 @@ function annexBUnits(bytes: Uint8Array, codec: "h265" | "h266") {
     if (nalOffset + 1 >= end) continue;
     const first = bytes[nalOffset];
     const second = bytes[nalOffset + 1];
-    if (first & 0x80) throw new Error(`NAL #${i} 的 forbidden_zero_bit 非零`);
+    const forbiddenZeroBit = (first >> 7) & 1;
 
     const type = codec === "h265" ? (first >> 1) & 0x3f : (second >> 3) & 0x1f;
     const layerId = codec === "h265" ? ((first & 1) << 5) | (second >> 3) : first & 0x3f;
     const temporalIdPlusOne = second & 7;
-    if (temporalIdPlusOne === 0) throw new Error(`NAL #${i} 的 nuh_temporal_id_plus1 为零`);
-    if (codec === "h266" && (first & 0x40)) throw new Error(`NAL #${i} 的 nuh_reserved_zero_bit 非零`);
+    const reservedZeroBit = codec === "h266" ? (first >> 6) & 1 : 0;
     const payload = bytes.subarray(nalOffset + 2, end);
     const isVcl = codec === "h265" ? type <= 31 : type <= 11;
     const keyFrame = codec === "h265" ? type >= 16 && type <= 23 : type >= 6 && type <= 9;
@@ -199,7 +198,13 @@ function annexBUnits(bytes: Uint8Array, codec: "h265" | "h266") {
       frameStart,
       layerId,
       temporalId: temporalIdPlusOne - 1,
-      fields: { nuh_layer_id: layerId, nuh_temporal_id_plus1: temporalIdPlusOne },
+      fields: {
+        forbidden_zero_bit: forbiddenZeroBit,
+        ...(codec === "h266" ? { nuh_reserved_zero_bit: reservedZeroBit } : {}),
+        nal_unit_type: type,
+        nuh_layer_id: layerId,
+        nuh_temporal_id_plus1: temporalIdPlusOne,
+      },
       hex: hexPreview(bytes.subarray(start.offset, end)),
     });
   }
@@ -402,11 +407,11 @@ function analyzeAv1Segments(bytes: Uint8Array, segments: Av1Segment[], container
     while (offset < segment.data.length) {
       const start = offset;
       const header = segment.data[offset++];
-      if (header & 0x80) throw new Error(`OBU #${units.length} 的 obu_forbidden_bit 非零`);
+      const forbiddenBit = (header >> 7) & 1;
       const type = (header >> 3) & 0xf;
       const extensionFlag = (header >> 2) & 1;
       const hasSizeField = (header >> 1) & 1;
-      if (header & 1) throw new Error(`OBU #${units.length} 的 obu_reserved_1bit 非零`);
+      const reservedBit = header & 1;
       let temporalId = 0;
       let spatialId = 0;
       if (extensionFlag) {
@@ -414,7 +419,6 @@ function analyzeAv1Segments(bytes: Uint8Array, segments: Av1Segment[], container
         const extension = segment.data[offset++];
         temporalId = extension >> 5;
         spatialId = (extension >> 3) & 3;
-        if (extension & 7) throw new Error(`OBU #${units.length} 的扩展保留位非零`);
       }
       let payloadSize = segment.data.length - offset;
       let sizeFieldLength = 0;
@@ -444,7 +448,16 @@ function analyzeAv1Segments(bytes: Uint8Array, segments: Av1Segment[], container
         sampleOffset: isFrame ? segment.sampleOffset : undefined,
         sampleSize: isFrame ? segment.sampleSize : undefined,
         timestamp: isFrame ? segment.timestamp : undefined,
-        fields: { obu_extension_flag: Boolean(extensionFlag), temporal_id: temporalId, spatial_id: spatialId },
+        fields: {
+          obu_forbidden_bit: forbiddenBit,
+          obu_type: type,
+          obu_extension_flag: Boolean(extensionFlag),
+          obu_has_size_field: Boolean(hasSizeField),
+          obu_reserved_1bit: reservedBit,
+          ...(extensionFlag ? { extension_header_reserved_3bits: segment.data[start + 1] & 7 } : {}),
+          temporal_id: temporalId,
+          spatial_id: spatialId,
+        },
         hex: hexPreview(bytes.subarray(absoluteStart, absoluteStart + size)),
       });
       offset += payloadSize;

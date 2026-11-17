@@ -35,6 +35,7 @@ The desktop packages are self-contained; users do not need Node.js, npm, FFmpeg,
 ## Features
 
 - Stream metadata and a navigable NAL/OBU timeline
+- Searchable, source-linked syntax tree with byte/bit locations and compliance diagnostics
 - Synchronized decoded and residual pictures
 - Macroblock, CTU, and Superblock grids with click selection
 - Mouse-wheel zoom, panning, fit-to-view, and precise block selection
@@ -105,6 +106,7 @@ Generated files and installers are written below `.artifacts/`. Release builds u
 
 ## Current limitations
 
+- Compliance diagnostics currently cover elementary-stream structure and implemented header constraints; they are not a substitute for a standards conformance test suite.
 - H.264 browser subblock parsing currently targets progressive 8-bit 4:2:0 CAVLC I/P slices; CABAC, B slices, FMO, and interlaced/MBAFF pictures need deeper parsing.
 - AV1 detailed block inspection currently requires IVF; raw OBU streams retain the structural Superblock grid.
 - HEVC and VVC currently expose structural grids rather than entropy-decoded subpartitions.
