@@ -127,6 +127,21 @@ int PrintFrame(const BitscopeH264Frame* frame, void* user_data) {
               << ",\"motionVectors\":" << frame->motion_vector_count
               << ",\"transformBlocks\":" << frame->transform_block_count
               << ",\"coefficients\":" << coefficient_count
+              << ",\"pictureId\":" << frame->picture_id
+              << ",\"frameNum\":" << frame->frame_num
+              << ",\"poc\":" << frame->poc
+              << ",\"slices\":" << frame->slice_count
+              << ",\"references\":" << frame->reference_count
+              << ",\"referenceModifications\":"
+              << frame->reference_modification_count
+              << ",\"dpbEntries\":" << frame->dpb_entry_count
+              << ",\"postMarkingDpbEntries\":" << frame->post_marking_dpb_count
+              << ",\"referencePictureIds\":[";
+    for (uint32_t index = 0; index < frame->reference_count; ++index) {
+      if (index != 0) std::cout << ',';
+      std::cout << frame->references[index].picture_id;
+    }
+    std::cout << ']'
               << ",\"incompleteStages\":" << frame->incomplete_stages
               << ",\"availableStages\":" << frame->available_stages << "}\n";
     if (!std::cout.good()) return 1;
@@ -184,7 +199,8 @@ int main(int argc, char** argv) {
   summary.arguments = arguments;
   BitscopeH264Limits limits{
       sizeof(BitscopeH264Limits), kCliMaxInputBytes, 8192u,
-      8192ull * 4320ull, 10000u, 1000000u, 1000000u, 16000000u};
+      8192ull * 4320ull, 10000u, 1000000u, 1000000u, 16000000u,
+      4096u, 262144u, 262144u, 147492u};
   BitscopeH264Observer observer{sizeof(BitscopeH264Observer), PrintFrame, &summary};
   char error[512]{};
   const int result = bitscope_h264_inspect_annexb(

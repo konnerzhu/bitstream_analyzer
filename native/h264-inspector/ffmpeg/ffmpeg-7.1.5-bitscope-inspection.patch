@@ -31,7 +31,7 @@
                                            h264_slice.o h264data.o h274.o
 --- a/libavcodec/h264dec.h
 +++ b/libavcodec/h264dec.h
-@@ -358,6 +358,10 @@
+@@ -358,6 +358,14 @@
      H2645Packet pkt;
  
      int pixel_shift;    ///< 0 for 8-bit H.264, 1 for high-bit-depth H.264
@@ -39,6 +39,10 @@
 +    uint32_t bitscope_inspection_stages;
 +    uint32_t bitscope_max_transform_blocks;
 +    uint32_t bitscope_max_coefficients;
++    uint32_t bitscope_max_reference_slices;
++    uint32_t bitscope_max_reference_entries;
++    uint32_t bitscope_max_reference_modifications;
++    uint32_t bitscope_max_dpb_entries;
  
      /* coded dimensions -- 16 * mb w/h */
      int width, height;
@@ -63,13 +67,17 @@
      }
  
      return 0;
-@@ -1105,6 +1103,9 @@
+@@ -1105,6 +1103,13 @@
  #define VD AV_OPT_FLAG_VIDEO_PARAM | AV_OPT_FLAG_DECODING_PARAM
  #define VDX VD | AV_OPT_FLAG_EXPORT
  static const AVOption h264_options[] = {
 +    { "bitscope_inspection", "Export BitScope H.264 decoder stages", OFFSET(bitscope_inspection_stages), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, INT_MAX, VD },
 +    { "bitscope_max_transform_blocks", "Maximum exported transform blocks", OFFSET(bitscope_max_transform_blocks), AV_OPT_TYPE_INT, { .i64 = 1000000 }, 1, INT_MAX, VD },
 +    { "bitscope_max_coefficients", "Maximum exported transform coefficients", OFFSET(bitscope_max_coefficients), AV_OPT_TYPE_INT, { .i64 = 16000000 }, 1, INT_MAX, VD },
++    { "bitscope_max_reference_slices", "Maximum exported reference-list slices", OFFSET(bitscope_max_reference_slices), AV_OPT_TYPE_INT, { .i64 = 4096 }, 1, INT_MAX, VD },
++    { "bitscope_max_reference_entries", "Maximum exported reference-list entries", OFFSET(bitscope_max_reference_entries), AV_OPT_TYPE_INT, { .i64 = 262144 }, 1, INT_MAX, VD },
++    { "bitscope_max_reference_modifications", "Maximum exported reference-list modifications", OFFSET(bitscope_max_reference_modifications), AV_OPT_TYPE_INT, { .i64 = 262144 }, 1, INT_MAX, VD },
++    { "bitscope_max_dpb_entries", "Maximum exported DPB entries", OFFSET(bitscope_max_dpb_entries), AV_OPT_TYPE_INT, { .i64 = 147492 }, 1, INT_MAX, VD },
      { "is_avc", "is avc", OFFSET(is_avc), AV_OPT_TYPE_BOOL, {.i64 = 0}, 0, 1, VDX },
      { "nal_length_size", "nal_length_size", OFFSET(nal_length_size), AV_OPT_TYPE_INT, {.i64 = 0}, 0, 4, VDX },
      { "enable_er", "Enable error resilience on damaged frames (unsafe)", OFFSET(enable_er), AV_OPT_TYPE_BOOL, { .i64 = -1 }, -1, 1, VD },
@@ -167,3 +175,15 @@
          }
  
          for (p = 0; p < plane_count; p++)
+--- a/libavcodec/h264_slice.c
++++ b/libavcodec/h264_slice.c
+@@ -38,0 +39 @@
++#include "bitscope_h264_inspection_internal.h"
+@@ -1988,0 +1990 @@
++    ff_bitscope_h264_record_references(h, sl);
+--- a/libavcodec/h264_picture.c
++++ b/libavcodec/h264_picture.c
+@@ -31,0 +32 @@
++#include "bitscope_h264_inspection_internal.h"
+@@ -204,0 +206 @@
++    ff_bitscope_h264_record_post_marking_dpb(h);

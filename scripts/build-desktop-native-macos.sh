@@ -18,7 +18,7 @@ license_output="$project_root/.artifacts/desktop/native-licenses"
 h264_build="$work_root/h264-build"
 inspection_dir="$project_root/native/h264-inspector/ffmpeg"
 inspection_patch="$inspection_dir/ffmpeg-7.1.5-bitscope-inspection.patch"
-inspection_stamp="$ffmpeg_source/.bitscope-inspection-v2"
+inspection_stamp="$ffmpeg_source/.bitscope-inspection-v4"
 
 mkdir -p "$work_root" "$native_output" "$license_output"
 

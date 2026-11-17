@@ -33,11 +33,17 @@ constexpr uint32_t kDefaultMaxFrames = 10000u;
 constexpr uint32_t kDefaultMaxMotionVectors = 1000000u;
 constexpr uint32_t kDefaultMaxTransformBlocks = 1000000u;
 constexpr uint32_t kDefaultMaxCoefficients = 16000000u;
+constexpr uint32_t kDefaultMaxReferenceSlices = 4096u;
+constexpr uint32_t kDefaultMaxReferenceEntries = 262144u;
+constexpr uint32_t kDefaultMaxReferenceModifications = 262144u;
+constexpr uint32_t kDefaultMaxDpbEntries = 147492u;
 constexpr uint32_t kRequestedNativeInspectionStages =
     BITSCOPE_H264_STAGE_PREDICTED_PIXELS |
     BITSCOPE_H264_STAGE_RESIDUAL_PIXELS |
     BITSCOPE_H264_STAGE_TRANSFORM_COEFFICIENTS |
-    BITSCOPE_H264_STAGE_PRE_FILTER_PIXELS;
+    BITSCOPE_H264_STAGE_PRE_FILTER_PIXELS |
+    BITSCOPE_H264_STAGE_REFERENCE_LISTS |
+    BITSCOPE_H264_STAGE_DPB;
 constexpr uint32_t kNativeInspectionStages =
     BITSCOPE_HAS_FFMPEG_INSPECTION ? kRequestedNativeInspectionStages : 0u;
 constexpr uint32_t kAvailableStages = BITSCOPE_H264_STAGE_FINAL_PIXELS |
@@ -72,6 +78,10 @@ struct DecodeState {
   std::vector<BitscopeH264MotionVector> motion_vectors;
   std::vector<int32_t> coefficients;
   std::vector<BitscopeH264TransformBlock> transform_blocks;
+  std::vector<BitscopeH264SliceReferences> slices;
+  std::vector<BitscopeH264ReferenceEntry> references;
+  std::vector<BitscopeH264ReferenceModification> reference_modifications;
+  std::vector<BitscopeH264DpbEntry> dpb_entries;
 };
 
 void WriteError(char* destination, size_t capacity, std::string_view message) {
@@ -100,7 +110,9 @@ BitscopeH264Limits ResolveLimits(const BitscopeH264Limits* supplied) {
   BitscopeH264Limits result{
       sizeof(BitscopeH264Limits), kDefaultMaxInputBytes, kDefaultMaxDimension,
       kDefaultMaxPixels, kDefaultMaxFrames, kDefaultMaxMotionVectors,
-      kDefaultMaxTransformBlocks, kDefaultMaxCoefficients};
+      kDefaultMaxTransformBlocks, kDefaultMaxCoefficients,
+      kDefaultMaxReferenceSlices, kDefaultMaxReferenceEntries,
+      kDefaultMaxReferenceModifications, kDefaultMaxDpbEntries};
   if (supplied == nullptr) return result;
   result.max_input_bytes = supplied->max_input_bytes;
   result.max_dimension = supplied->max_dimension;
@@ -109,8 +121,19 @@ BitscopeH264Limits ResolveLimits(const BitscopeH264Limits* supplied) {
   result.max_motion_vectors_per_frame = supplied->max_motion_vectors_per_frame;
   result.max_transform_blocks_per_frame = supplied->max_transform_blocks_per_frame;
   result.max_coefficients_per_frame = supplied->max_coefficients_per_frame;
+  result.max_reference_slices_per_frame = supplied->max_reference_slices_per_frame;
+  result.max_reference_entries_per_frame = supplied->max_reference_entries_per_frame;
+  result.max_reference_modifications_per_frame =
+      supplied->max_reference_modifications_per_frame;
+  result.max_dpb_entries_per_frame = supplied->max_dpb_entries_per_frame;
   return result;
 }
+
+#if BITSCOPE_HAS_FFMPEG_INSPECTION
+bool RangeWithin(uint32_t offset, uint32_t count, size_t size) {
+  return offset <= size && count <= size - offset;
+}
+#endif
 
 int ValidateFrame(const AVFrame* frame, const DecodeState& state, std::string* error) {
   if (frame->width <= 0 || frame->height <= 0 ||
@@ -138,6 +161,10 @@ int InspectFrame(const AVFrame* decoded, DecodeState* state, std::string* error)
   state->motion_vectors.clear();
   state->coefficients.clear();
   state->transform_blocks.clear();
+  state->slices.clear();
+  state->references.clear();
+  state->reference_modifications.clear();
+  state->dpb_entries.clear();
   const AVFrameSideData* side_data = av_frame_get_side_data(decoded, AV_FRAME_DATA_MOTION_VECTORS);
   if (side_data != nullptr) {
     if (side_data->size % sizeof(AVMotionVector) != 0) {
@@ -267,6 +294,123 @@ int InspectFrame(const AVFrame* decoded, DecodeState* state, std::string* error)
   }
   frame.transform_blocks = state->transform_blocks.empty() ? nullptr : state->transform_blocks.data();
   frame.transform_block_count = static_cast<uint32_t>(state->transform_blocks.size());
+
+  if (inspection->slice_count > state->limits.max_reference_slices_per_frame ||
+      inspection->reference_count > state->limits.max_reference_entries_per_frame ||
+      inspection->modification_count >
+          state->limits.max_reference_modifications_per_frame ||
+      inspection->dpb_entry_count > state->limits.max_dpb_entries_per_frame) {
+    *error = "decoder reference metadata exceeds the configured limit";
+    return BITSCOPE_H264_LIMIT_EXCEEDED;
+  }
+  if ((inspection->slice_count != 0 && inspection->slices == nullptr) ||
+      (inspection->reference_count != 0 && inspection->references == nullptr) ||
+      (inspection->modification_count != 0 && inspection->modifications == nullptr) ||
+      (inspection->dpb_entry_count != 0 && inspection->dpb_entries == nullptr) ||
+      !RangeWithin(inspection->post_marking_dpb_offset,
+                   inspection->post_marking_dpb_count,
+                   inspection->dpb_entry_count)) {
+    *error = "decoder returned malformed H.264 reference metadata";
+    return BITSCOPE_H264_DECODE_ERROR;
+  }
+
+  state->references.reserve(inspection->reference_count);
+  for (uint32_t index = 0; index < inspection->reference_count; ++index) {
+    const AVH264ReferenceEntry& source = inspection->references[index];
+    if (source.list > 1 || source.index >= 32 ||
+        source.short_term_slot < -1 || source.short_term_slot >= 32 ||
+        source.long_term_slot < -1 || source.long_term_slot >= 32) {
+      *error = "decoder returned malformed H.264 reference-list entry";
+      return BITSCOPE_H264_DECODE_ERROR;
+    }
+    state->references.push_back({
+        source.picture_id, source.frame_num, source.pic_id, source.poc,
+        {source.field_poc[0], source.field_poc[1]}, source.short_term_slot,
+        source.long_term_slot, source.list, source.index, source.reference,
+        source.long_term});
+  }
+  state->reference_modifications.reserve(inspection->modification_count);
+  for (uint32_t index = 0; index < inspection->modification_count; ++index) {
+    const AVH264ReferenceModification& source = inspection->modifications[index];
+    if (source.list > 1 || source.index >= 32 || source.operation > 3) {
+      *error = "decoder returned malformed reference-list modification";
+      return BITSCOPE_H264_DECODE_ERROR;
+    }
+    state->reference_modifications.push_back({
+        source.value, source.list, source.index, source.operation, 0});
+  }
+  state->dpb_entries.reserve(inspection->dpb_entry_count);
+  for (uint32_t index = 0; index < inspection->dpb_entry_count; ++index) {
+    const AVH264DPBEntry& source = inspection->dpb_entries[index];
+    const bool valid_slot =
+        (source.slot_kind == AV_H264_DPB_SHORT_TERM && source.slot >= 0 &&
+         source.slot < 32) ||
+        (source.slot_kind == AV_H264_DPB_LONG_TERM && source.slot >= 0 &&
+         source.slot < 32);
+    if (!valid_slot) {
+      *error = "decoder returned malformed DPB slot metadata";
+      return BITSCOPE_H264_DECODE_ERROR;
+    }
+    state->dpb_entries.push_back({
+        source.picture_id, source.frame_num, source.poc,
+        {source.field_poc[0], source.field_poc[1]}, source.slot,
+        source.slot_kind, source.reference, source.long_term,
+        source.delayed_output, source.recovered, source.invalid_gap});
+  }
+  state->slices.reserve(inspection->slice_count);
+  for (uint32_t index = 0; index < inspection->slice_count; ++index) {
+    const AVH264SliceReferences& source = inspection->slices[index];
+    if (source.list_count > 2 || source.ref_count[0] > 32 ||
+        source.ref_count[1] > 32 ||
+        !RangeWithin(source.reference_offset[0], source.ref_count[0],
+                     state->references.size()) ||
+        !RangeWithin(source.reference_offset[1], source.ref_count[1],
+                     state->references.size()) ||
+        !RangeWithin(source.modification_offset[0], source.modification_count[0],
+                     state->reference_modifications.size()) ||
+        !RangeWithin(source.modification_offset[1], source.modification_count[1],
+                     state->reference_modifications.size()) ||
+        !RangeWithin(source.dpb_offset, source.dpb_count,
+                     state->dpb_entries.size())) {
+      *error = "decoder returned malformed per-slice reference offsets";
+      return BITSCOPE_H264_DECODE_ERROR;
+    }
+    for (uint32_t list = 0; list < 2; ++list) {
+      for (uint32_t entry = 0; entry < source.ref_count[list]; ++entry) {
+        const BitscopeH264ReferenceEntry& reference =
+            state->references[source.reference_offset[list] + entry];
+        if (reference.list != list || reference.index != entry) {
+          *error = "decoder returned inconsistent H.264 reference-list ordering";
+          return BITSCOPE_H264_DECODE_ERROR;
+        }
+      }
+    }
+    state->slices.push_back({
+        source.slice_num, source.first_mb_addr, source.slice_type,
+        source.picture_structure, source.list_count,
+        {source.ref_count[0], source.ref_count[1]}, 0,
+        {source.reference_offset[0], source.reference_offset[1]},
+        {source.modification_offset[0], source.modification_offset[1]},
+        {source.modification_count[0], source.modification_count[1]},
+        source.dpb_offset, source.dpb_count});
+  }
+  frame.picture_id = inspection->picture_id;
+  frame.frame_num = inspection->frame_num;
+  frame.poc = inspection->poc;
+  frame.field_poc[0] = inspection->field_poc[0];
+  frame.field_poc[1] = inspection->field_poc[1];
+  frame.slices = state->slices.empty() ? nullptr : state->slices.data();
+  frame.slice_count = static_cast<uint32_t>(state->slices.size());
+  frame.references = state->references.empty() ? nullptr : state->references.data();
+  frame.reference_count = static_cast<uint32_t>(state->references.size());
+  frame.reference_modifications = state->reference_modifications.empty() ?
+      nullptr : state->reference_modifications.data();
+  frame.reference_modification_count =
+      static_cast<uint32_t>(state->reference_modifications.size());
+  frame.dpb_entries = state->dpb_entries.empty() ? nullptr : state->dpb_entries.data();
+  frame.dpb_entry_count = static_cast<uint32_t>(state->dpb_entries.size());
+  frame.post_marking_dpb_offset = inspection->post_marking_dpb_offset;
+  frame.post_marking_dpb_count = inspection->post_marking_dpb_count;
 #endif
 
   const AVPixFmtDescriptor* descriptor = av_pix_fmt_desc_get(static_cast<AVPixelFormat>(decoded->format));
@@ -352,14 +496,23 @@ extern "C" int bitscope_h264_inspect_annexb(
       resolved.max_pixels == 0 || resolved.max_frames == 0 ||
       resolved.max_motion_vectors_per_frame == 0 ||
       resolved.max_transform_blocks_per_frame == 0 ||
-      resolved.max_coefficients_per_frame == 0) {
+      resolved.max_coefficients_per_frame == 0 ||
+      resolved.max_reference_slices_per_frame == 0 ||
+      resolved.max_reference_entries_per_frame == 0 ||
+      resolved.max_reference_modifications_per_frame == 0 ||
+      resolved.max_dpb_entries_per_frame == 0) {
     WriteError(error_message, error_message_capacity, "H.264 inspector limits must be positive");
     return BITSCOPE_H264_INVALID_ARGUMENT;
   }
   if (resolved.max_transform_blocks_per_frame > kDefaultMaxTransformBlocks ||
-      resolved.max_coefficients_per_frame > kDefaultMaxCoefficients) {
+      resolved.max_coefficients_per_frame > kDefaultMaxCoefficients ||
+      resolved.max_reference_slices_per_frame > kDefaultMaxReferenceSlices ||
+      resolved.max_reference_entries_per_frame > kDefaultMaxReferenceEntries ||
+      resolved.max_reference_modifications_per_frame >
+          kDefaultMaxReferenceModifications ||
+      resolved.max_dpb_entries_per_frame > kDefaultMaxDpbEntries) {
     WriteError(error_message, error_message_capacity,
-               "H.264 coefficient limits exceed the inspector hard cap");
+               "H.264 inspection limits exceed the inspector hard cap");
     return BITSCOPE_H264_LIMIT_EXCEEDED;
   }
   if (size > resolved.max_input_bytes || size > static_cast<size_t>(std::numeric_limits<int>::max())) {
@@ -394,7 +547,16 @@ extern "C" int bitscope_h264_inspect_annexb(
         av_opt_set_int(codec_context->priv_data, "bitscope_max_transform_blocks",
                        resolved.max_transform_blocks_per_frame, 0) < 0 ||
         av_opt_set_int(codec_context->priv_data, "bitscope_max_coefficients",
-                       resolved.max_coefficients_per_frame, 0) < 0) {
+                       resolved.max_coefficients_per_frame, 0) < 0 ||
+        av_opt_set_int(codec_context->priv_data, "bitscope_max_reference_slices",
+                       resolved.max_reference_slices_per_frame, 0) < 0 ||
+        av_opt_set_int(codec_context->priv_data, "bitscope_max_reference_entries",
+                       resolved.max_reference_entries_per_frame, 0) < 0 ||
+        av_opt_set_int(codec_context->priv_data,
+                       "bitscope_max_reference_modifications",
+                       resolved.max_reference_modifications_per_frame, 0) < 0 ||
+        av_opt_set_int(codec_context->priv_data, "bitscope_max_dpb_entries",
+                       resolved.max_dpb_entries_per_frame, 0) < 0) {
       WriteError(error_message, error_message_capacity,
                  "bundled FFmpeg decoder does not support H.264 inspection hooks");
       return BITSCOPE_H264_DECODER_UNAVAILABLE;
@@ -408,7 +570,7 @@ extern "C" int bitscope_h264_inspect_annexb(
 
     std::vector<uint8_t> padded(size + AV_INPUT_BUFFER_PADDING_SIZE, 0);
     std::copy_n(data, size, padded.data());
-    DecodeState state{resolved, observer, 0, {}, {}, {}};
+    DecodeState state{resolved, observer, 0, {}, {}, {}, {}, {}, {}, {}};
     state.motion_vectors.reserve(std::min(static_cast<uint32_t>(4096), resolved.max_motion_vectors_per_frame));
     size_t offset = 0;
     std::string error;

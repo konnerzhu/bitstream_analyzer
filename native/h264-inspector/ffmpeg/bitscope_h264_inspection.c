@@ -22,6 +22,10 @@
 
 #include "h264dec.h"
 
+#include <stdatomic.h>
+
+static atomic_uint_fast64_t next_picture_id = 1;
+
 static AVFrame *inspection_frame(const H264Context *h)
 {
     return h->cur_pic_ptr ? h->cur_pic_ptr->f : h->cur_pic.f;
@@ -41,7 +45,38 @@ static void inspection_free(void *opaque, uint8_t *data)
     }
     av_freep(&inspection->transform_blocks);
     av_freep(&inspection->coefficients);
+    av_freep(&inspection->slices);
+    av_freep(&inspection->references);
+    av_freep(&inspection->modifications);
+    av_freep(&inspection->dpb_entries);
     av_free(inspection);
+}
+
+static int reserve_array(void **array, uint32_t *capacity, uint32_t needed,
+                         uint32_t hard_limit, size_t element_size)
+{
+    uint32_t grown;
+    void *replacement;
+
+    if (needed > hard_limit)
+        return AVERROR(E2BIG);
+    if (needed <= *capacity)
+        return 0;
+    grown = *capacity ? *capacity : FFMIN(needed, 64u);
+    while (grown < needed) {
+        const uint32_t increment = FFMAX(grown / 2, 1u);
+        if (increment > hard_limit - grown) {
+            grown = hard_limit;
+            break;
+        }
+        grown += increment;
+    }
+    replacement = av_realloc_array(*array, grown, element_size);
+    if (!replacement)
+        return AVERROR(ENOMEM);
+    *array = replacement;
+    *capacity = grown;
+    return 0;
 }
 
 static int allocate_plane(AVH264InspectionPlane *plane, uint32_t width,
@@ -102,6 +137,17 @@ static AVH264Inspection *inspection_for(const H264Context *h)
     inspection->bit_depth = h->ps.sps->bit_depth_luma;
     inspection->pixel_shift = h->pixel_shift;
     inspection->plane_count = h->ps.sps->chroma_format_idc ? 3 : 1;
+    inspection->picture_id = atomic_fetch_add_explicit(&next_picture_id, 1,
+                                                        memory_order_relaxed);
+    if (!inspection->picture_id)
+        inspection->picture_id = atomic_fetch_add_explicit(&next_picture_id, 1,
+                                                            memory_order_relaxed);
+    if (h->cur_pic_ptr) {
+        inspection->frame_num = h->cur_pic_ptr->frame_num;
+        inspection->poc = h->cur_pic_ptr->poc;
+        inspection->field_poc[0] = h->cur_pic_ptr->field_poc[0];
+        inspection->field_poc[1] = h->cur_pic_ptr->field_poc[1];
+    }
 
     for (plane = 0; plane < inspection->plane_count; plane++) {
         const unsigned int x_shift = plane ? h->chroma_x_shift : 0;
@@ -374,4 +420,206 @@ void ff_bitscope_h264_record_reconstruction(const H264Context *h, H264SliceConte
         record_reconstruction_block(h, inspection, plane, source,
                                     frame->linesize[plane], width, height, pcm);
     }
+}
+
+static uint64_t picture_id(const H264Picture *picture)
+{
+    const AVH264Inspection *inspection;
+    if (!picture || !picture->f)
+        return 0;
+    inspection = av_h264_get_inspection(picture->f);
+    return inspection ? inspection->picture_id : 0;
+}
+
+static uint32_t dpb_count(const H264Context *h)
+{
+    uint32_t count = h->short_ref_count;
+    int slot;
+    for (slot = 0; slot < 32; slot++)
+        count += h->long_ref[slot] != NULL;
+    return count;
+}
+
+static void fill_dpb_entry(AVH264DPBEntry *entry, const H264Picture *picture,
+                           int slot, int slot_kind)
+{
+    entry->picture_id = picture_id(picture);
+    entry->frame_num = picture->frame_num;
+    entry->poc = picture->poc;
+    entry->field_poc[0] = picture->field_poc[0];
+    entry->field_poc[1] = picture->field_poc[1];
+    entry->slot = slot;
+    entry->slot_kind = slot_kind;
+    entry->reference = picture->reference;
+    entry->long_term = picture->long_ref != 0;
+    entry->delayed_output = !!(picture->reference & DELAYED_PIC_REF);
+    entry->recovered = picture->recovered != 0;
+    entry->invalid_gap = picture->invalid_gap != 0;
+}
+
+static void append_dpb(const H264Context *h, AVH264Inspection *inspection)
+{
+    int slot;
+    for (slot = 0; slot < h->short_ref_count; slot++)
+        fill_dpb_entry(&inspection->dpb_entries[inspection->dpb_entry_count++],
+                       h->short_ref[slot], slot, AV_H264_DPB_SHORT_TERM);
+    for (slot = 0; slot < 32; slot++) {
+        if (h->long_ref[slot])
+            fill_dpb_entry(&inspection->dpb_entries[inspection->dpb_entry_count++],
+                           h->long_ref[slot], slot, AV_H264_DPB_LONG_TERM);
+    }
+}
+
+static void reference_slots(const H264Context *h, const H264Picture *picture,
+                            int16_t *short_slot, int16_t *long_slot)
+{
+    int slot;
+    *short_slot = -1;
+    *long_slot = -1;
+    for (slot = 0; slot < h->short_ref_count; slot++) {
+        if (h->short_ref[slot] == picture) {
+            *short_slot = slot;
+            break;
+        }
+    }
+    for (slot = 0; slot < 32; slot++) {
+        if (h->long_ref[slot] == picture) {
+            *long_slot = slot;
+            break;
+        }
+    }
+}
+
+void ff_bitscope_h264_record_references(const H264Context *h,
+                                        const H264SliceContext *sl)
+{
+    AVH264Inspection *inspection = inspection_for(h);
+    AVH264SliceReferences *slice;
+    const uint32_t new_dpb = dpb_count(h);
+    const uint32_t new_references = sl->ref_count[0] +
+                                    (sl->list_count > 1 ? sl->ref_count[1] : 0);
+    const uint32_t new_modifications = sl->nb_ref_modifications[0] +
+        (sl->list_count > 1 ? sl->nb_ref_modifications[1] : 0);
+    uint32_t needed;
+    int list;
+
+    if (!inspection || !(inspection->available_stages &
+        (AV_H264_INSPECTION_REFERENCE_LISTS | AV_H264_INSPECTION_DPB)))
+        return;
+    if (sl->list_count > 2 || sl->ref_count[0] > 32 || sl->ref_count[1] > 32 ||
+        sl->nb_ref_modifications[0] < 0 || sl->nb_ref_modifications[0] > 32 ||
+        sl->nb_ref_modifications[1] < 0 || sl->nb_ref_modifications[1] > 32)
+        goto incomplete;
+    if (inspection->slice_count == UINT32_MAX ||
+        new_references > UINT32_MAX - inspection->reference_count ||
+        new_modifications > UINT32_MAX - inspection->modification_count ||
+        new_dpb > UINT32_MAX - inspection->dpb_entry_count)
+        goto incomplete;
+    if (reserve_array((void **)&inspection->slices, &inspection->slice_capacity,
+                      inspection->slice_count + 1,
+                      h->bitscope_max_reference_slices,
+                      sizeof(*inspection->slices)) < 0)
+        goto incomplete;
+    needed = inspection->reference_count + new_references;
+    if (reserve_array((void **)&inspection->references,
+                      &inspection->reference_capacity, needed,
+                      h->bitscope_max_reference_entries,
+                      sizeof(*inspection->references)) < 0)
+        goto incomplete;
+    needed = inspection->modification_count + new_modifications;
+    if (reserve_array((void **)&inspection->modifications,
+                      &inspection->modification_capacity, needed,
+                      h->bitscope_max_reference_modifications,
+                      sizeof(*inspection->modifications)) < 0)
+        goto incomplete;
+    needed = inspection->dpb_entry_count + new_dpb;
+    if (reserve_array((void **)&inspection->dpb_entries,
+                      &inspection->dpb_entry_capacity, needed,
+                      h->bitscope_max_dpb_entries,
+                      sizeof(*inspection->dpb_entries)) < 0)
+        goto incomplete;
+
+    slice = &inspection->slices[inspection->slice_count];
+    slice->slice_num = sl->slice_num;
+    slice->first_mb_addr = sl->first_mb_addr;
+    slice->slice_type = sl->slice_type_nos;
+    slice->picture_structure = sl->picture_structure;
+    slice->list_count = sl->list_count;
+    slice->reserved = 0;
+    slice->dpb_offset = inspection->dpb_entry_count;
+    slice->dpb_count = new_dpb;
+    append_dpb(h, inspection);
+    for (list = 0; list < 2; list++) {
+        const uint32_t ref_count = list < sl->list_count ? sl->ref_count[list] : 0;
+        const uint32_t mod_count = list < sl->list_count ?
+            sl->nb_ref_modifications[list] : 0;
+        uint32_t index;
+        slice->ref_count[list] = ref_count;
+        slice->reference_offset[list] = inspection->reference_count;
+        slice->modification_offset[list] = inspection->modification_count;
+        slice->modification_count[list] = mod_count;
+        for (index = 0; index < ref_count; index++) {
+            const H264Ref *source = &sl->ref_list[list][index];
+            AVH264ReferenceEntry *entry =
+                &inspection->references[inspection->reference_count++];
+            if (!source->parent)
+                goto incomplete_committed;
+            entry->picture_id = picture_id(source->parent);
+            entry->frame_num = source->parent->frame_num;
+            entry->pic_id = source->pic_id;
+            entry->poc = source->poc;
+            entry->field_poc[0] = source->parent->field_poc[0];
+            entry->field_poc[1] = source->parent->field_poc[1];
+            reference_slots(h, source->parent, &entry->short_term_slot,
+                            &entry->long_term_slot);
+            entry->list = list;
+            entry->index = index;
+            entry->reference = source->reference;
+            entry->long_term = source->parent->long_ref != 0;
+        }
+        for (index = 0; index < mod_count; index++) {
+            AVH264ReferenceModification *entry =
+                &inspection->modifications[inspection->modification_count++];
+            entry->value = sl->ref_modifications[list][index].val;
+            entry->list = list;
+            entry->index = index;
+            entry->operation = sl->ref_modifications[list][index].op;
+            entry->reserved = 0;
+        }
+    }
+    inspection->slice_count++;
+    return;
+
+incomplete_committed:
+    inspection->reference_count = slice->reference_offset[0];
+    inspection->modification_count = slice->modification_offset[0];
+    inspection->dpb_entry_count = slice->dpb_offset;
+incomplete:
+    inspection->incomplete_stages |= AV_H264_INSPECTION_REFERENCE_LISTS |
+                                     AV_H264_INSPECTION_DPB;
+}
+
+void ff_bitscope_h264_record_post_marking_dpb(const H264Context *h)
+{
+    AVH264Inspection *inspection = inspection_for(h);
+    const uint32_t count = dpb_count(h);
+    uint32_t needed;
+
+    if (!inspection || !(inspection->available_stages & AV_H264_INSPECTION_DPB))
+        return;
+    if (count > UINT32_MAX - inspection->dpb_entry_count)
+        goto incomplete;
+    needed = inspection->dpb_entry_count + count;
+    if (reserve_array((void **)&inspection->dpb_entries,
+                      &inspection->dpb_entry_capacity, needed,
+                      h->bitscope_max_dpb_entries,
+                      sizeof(*inspection->dpb_entries)) < 0)
+        goto incomplete;
+    inspection->post_marking_dpb_offset = inspection->dpb_entry_count;
+    inspection->post_marking_dpb_count = count;
+    append_dpb(h, inspection);
+    return;
+
+incomplete:
+    inspection->incomplete_stages |= AV_H264_INSPECTION_DPB;
 }

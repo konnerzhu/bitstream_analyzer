@@ -63,16 +63,24 @@ test(
       assert.ok(frames[1].motionVectors > 0);
       assert.equal(summary.frames, 2);
       assert.ok(summary.motionVectors > 0);
-      assert.equal(summary.abiVersion, 3);
-      assert.ok(summary.availableStages === 3 || summary.availableStages === 63);
-      if (summary.availableStages === 63) {
-        assert.ok(frames.every(frame => frame.availableStages === 63));
+      assert.equal(summary.abiVersion, 4);
+      assert.ok(summary.availableStages === 3 || summary.availableStages === 255);
+      if (summary.availableStages === 255) {
+        assert.ok(frames.every(frame => frame.availableStages === 255));
         assert.ok(frames.every(frame => frame.predictedPlanes === 3));
         assert.ok(frames.every(frame => frame.residualPlanes === 3));
         assert.ok(frames.every(frame => frame.preFilterPlanes === 3));
         assert.ok(frames.every(frame => frame.transformBlocks > 0));
         assert.ok(frames.every(frame => frame.coefficients > 0));
         assert.ok(frames.every(frame => frame.incompleteStages === 0));
+        assert.ok(frames.every(frame => frame.pictureId > 0));
+        assert.ok(frames.every(frame => frame.slices > 0));
+        assert.equal(frames[0].references, 0);
+        assert.ok(frames[0].postMarkingDpbEntries > 0);
+        assert.ok(frames[1].references > 0);
+        assert.ok(frames[1].dpbEntries > 0);
+        assert.ok(frames[1].postMarkingDpbEntries > 0);
+        assert.ok(frames[1].referencePictureIds.includes(frames[0].pictureId));
       }
 
       const packedPath = join(output, "selected.planes");

@@ -8,7 +8,7 @@
 extern "C" {
 #endif
 
-#define BITSCOPE_H264_INSPECTOR_ABI_VERSION 3u
+#define BITSCOPE_H264_INSPECTOR_ABI_VERSION 4u
 
 enum BitscopeH264PixelLayout {
   BITSCOPE_H264_PIXEL_I400 = 0,
@@ -24,7 +24,9 @@ enum BitscopeH264InspectionStage {
   BITSCOPE_H264_STAGE_PREDICTED_PIXELS = 1u << 2,
   BITSCOPE_H264_STAGE_RESIDUAL_PIXELS = 1u << 3,
   BITSCOPE_H264_STAGE_TRANSFORM_COEFFICIENTS = 1u << 4,
-  BITSCOPE_H264_STAGE_PRE_FILTER_PIXELS = 1u << 5
+  BITSCOPE_H264_STAGE_PRE_FILTER_PIXELS = 1u << 5,
+  BITSCOPE_H264_STAGE_REFERENCE_LISTS = 1u << 6,
+  BITSCOPE_H264_STAGE_DPB = 1u << 7
 };
 
 enum BitscopeH264TransformBlockFlags {
@@ -51,6 +53,10 @@ typedef struct BitscopeH264Limits {
   uint32_t max_motion_vectors_per_frame;
   uint32_t max_transform_blocks_per_frame;
   uint32_t max_coefficients_per_frame;
+  uint32_t max_reference_slices_per_frame;
+  uint32_t max_reference_entries_per_frame;
+  uint32_t max_reference_modifications_per_frame;
+  uint32_t max_dpb_entries_per_frame;
 } BitscopeH264Limits;
 
 typedef struct BitscopeH264Plane {
@@ -93,6 +99,62 @@ typedef struct BitscopeH264MotionVector {
   uint64_t flags;
 } BitscopeH264MotionVector;
 
+enum BitscopeH264DpbSlotKind {
+  BITSCOPE_H264_DPB_SHORT_TERM = 0,
+  BITSCOPE_H264_DPB_LONG_TERM = 1
+};
+
+typedef struct BitscopeH264DpbEntry {
+  uint64_t picture_id;
+  int32_t frame_num;
+  int32_t poc;
+  int32_t field_poc[2];
+  int16_t slot;
+  uint8_t slot_kind;
+  uint8_t reference;
+  uint8_t long_term;
+  uint8_t delayed_output;
+  uint8_t recovered;
+  uint8_t invalid_gap;
+} BitscopeH264DpbEntry;
+
+typedef struct BitscopeH264ReferenceEntry {
+  uint64_t picture_id;
+  int32_t frame_num;
+  int32_t pic_id;
+  int32_t poc;
+  int32_t field_poc[2];
+  int16_t short_term_slot;
+  int16_t long_term_slot;
+  uint8_t list;
+  uint8_t index;
+  uint8_t reference;
+  uint8_t long_term;
+} BitscopeH264ReferenceEntry;
+
+typedef struct BitscopeH264ReferenceModification {
+  uint32_t value;
+  uint8_t list;
+  uint8_t index;
+  uint8_t operation;
+  uint8_t reserved;
+} BitscopeH264ReferenceModification;
+
+typedef struct BitscopeH264SliceReferences {
+  uint32_t slice_num;
+  uint32_t first_mb_addr;
+  int32_t slice_type;
+  int32_t picture_structure;
+  uint8_t list_count;
+  uint8_t ref_count[2];
+  uint8_t reserved;
+  uint32_t reference_offset[2];
+  uint32_t modification_offset[2];
+  uint32_t modification_count[2];
+  uint32_t dpb_offset;
+  uint32_t dpb_count;
+} BitscopeH264SliceReferences;
+
 typedef struct BitscopeH264Frame {
   uint32_t struct_size;
   uint32_t decode_index;
@@ -122,6 +184,20 @@ typedef struct BitscopeH264Frame {
   uint8_t bit_depth;
   uint8_t pixel_layout;
   uint8_t reserved_v2[2];
+  uint64_t picture_id;
+  int32_t frame_num;
+  int32_t poc;
+  int32_t field_poc[2];
+  const BitscopeH264SliceReferences* slices;
+  uint32_t slice_count;
+  const BitscopeH264ReferenceEntry* references;
+  uint32_t reference_count;
+  const BitscopeH264ReferenceModification* reference_modifications;
+  uint32_t reference_modification_count;
+  const BitscopeH264DpbEntry* dpb_entries;
+  uint32_t dpb_entry_count;
+  uint32_t post_marking_dpb_offset;
+  uint32_t post_marking_dpb_count;
 } BitscopeH264Frame;
 
 typedef int (*BitscopeH264FrameCallback)(const BitscopeH264Frame* frame, void* user_data);
@@ -132,7 +208,9 @@ typedef struct BitscopeH264Observer {
   void* user_data;
 } BitscopeH264Observer;
 
-/* All returned data pointers, including coefficient arrays, are valid only during on_frame. */
+/* All returned data pointers, including coefficients, DPB snapshots, and reference
+ * lists, are valid only during on_frame. A picture_id is stable for the lifetime of
+ * one inspection call and links reference-list entries to DPB entries. */
 int bitscope_h264_inspect_annexb(
     const uint8_t* data,
     size_t size,

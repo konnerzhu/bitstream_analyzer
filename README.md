@@ -41,7 +41,7 @@ The desktop packages are self-contained; users do not need Node.js, npm, FFmpeg,
 - H.264 and AV1 intra-mode names and direction paths
 - Inter prediction modes and motion-vector overlays
 - Native H.264/AV1 decoding in the desktop application
-- Native H.264 prediction, coefficient, residual, pre-filter, final-pixel, and motion-vector inspection hooks
+- Native H.264 prediction, coefficient, residual, pre-filter, final-pixel, motion-vector, exact L0/L1 reference-list, and DPB inspection hooks
 - English and Simplified Chinese interfaces
 
 ## Supported input

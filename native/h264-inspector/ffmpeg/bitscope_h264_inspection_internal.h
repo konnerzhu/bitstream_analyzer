@@ -29,5 +29,7 @@ void ff_bitscope_h264_record_prediction(const H264Context *h, H264SliceContext *
                                         ptrdiff_t source_stride, int width, int height);
 void ff_bitscope_h264_mark_prediction_incomplete(const H264Context *h);
 void ff_bitscope_h264_record_reconstruction(const H264Context *h, H264SliceContext *sl);
+void ff_bitscope_h264_record_references(const H264Context *h, const H264SliceContext *sl);
+void ff_bitscope_h264_record_post_marking_dpb(const H264Context *h);
 
 #endif

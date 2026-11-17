@@ -22,7 +22,7 @@ meson_cross="$project_root/scripts/toolchains/windows-x64-mingw.ini"
 cmake_toolchain="$project_root/scripts/toolchains/windows-x64-mingw.cmake"
 inspection_dir="$project_root/native/h264-inspector/ffmpeg"
 inspection_patch="$inspection_dir/ffmpeg-7.1.5-bitscope-inspection.patch"
-inspection_stamp="$ffmpeg_source/.bitscope-inspection-v2"
+inspection_stamp="$ffmpeg_source/.bitscope-inspection-v4"
 
 for tool in curl shasum tar patch make cmake meson ninja pkg-config \
   x86_64-w64-mingw32-gcc x86_64-w64-mingw32-g++ x86_64-w64-mingw32-ar \
